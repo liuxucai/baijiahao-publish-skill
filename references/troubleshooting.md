@@ -1,11 +1,15 @@
 # 百家号发布问题与解决方案(v6,2026-07-07 / v7 修正 2026-07-10)
 
 > ⚠️ v7 重大修正(2026-07-10 已 E2E 验证发布成功):
-> 1. **发布按钮**:v7 初版称可用 CDP eval 原生 `button.click()` 一次完成——**二次实测(18:54)证明不成立**:in-page `button.click()` 对 cheetah/React 组件不提交(返回 CLICKED 但 URL 不变)。**正确做法:CDP `Input.dispatchMouseEvent` 真实鼠标坐标点击**(取按钮真实中心)。标题为空/封面缺失仍会静默拦截,表现为按钮失灵。
+> 1. **发布按钮**:v7 初版称可用 CDP eval 原生 `button.click()` 一次完成--**二次实测(18:54)证明不成立**:in-page `button.click()` 对 cheetah/React 组件不提交(返回 CLICKED 但 URL 不变)。**正确做法:CDP `Input.dispatchMouseEvent` 真实鼠标坐标点击**(取按钮真实中心)。标题为空/封面缺失仍会静默拦截,表现为按钮失灵。
 > 2. **封面弹窗不是 Ant Design**,是百家号自研 cheetah/FeEditorApp 组件,所有 `.ant-modal` 选择器失效。
-> 3. **遮罩层不是发布拦截根因**——移除遮罩层的暴力方案多余,标题/封面缺失才是真因。
+> 3. **遮罩层不是发布拦截根因**--移除遮罩层的暴力方案多余,标题/封面缺失才是真因。
 > 4. **标题用 CDP Input.insertText 可用**(非追加),之前 T2 结论过时。
-> 5. **封面各步(v7 初版坐标 612,561/1153,274/1384,752 已失效)**:占位项真实中心偏左(约299,535)、AI 生成触发是 SPAN“根据全文智能生成封面”(非 1153,274 的 DIV),全部须真实鼠标 + 动态取中心,禁硬编码、禁 `.click()`。
+> 5. **封面各步(v7 初版坐标 612,561/1153,274/1384,752 已失效)**:占位项真实中心偏左、AI 生成触发是 SPAN"根据全文智能生成封面"(非 1153,274 的 DIV),全部须真实鼠标 + 动态取中心,禁硬编码、禁 `.click()`。
+> 6. **(2026-07-15 修正) class hash 每次加载都变**:`_73a3a52aab7e3a36` / `_48bec92b4e533276` 等 `FeEditorApp-*` hash 每次页面加载随机变化,任何写死 hash 的选择器必然后续失效。封面占位改动态文本定位:"选择封面"文字向上找 `-default` 祖先。真实可点占位容器约 612×134、中心约 (506,312)——**文档旧写的 198×134/(299,305) 是误判,已作废**。
+> 7. **(2026-07-15) 全屏封面选择弹窗会遮挡编辑页"发布"按钮**:点封面弹窗"确定"选好封面后,若立刻点"发布"会被该 fullscreen modal 吞掉(页面无变化)。必须先轮询确认弹窗消失(COVER_MODAL 不存在)再点发布。
+> 8. **(2026-07-15) 编辑页常驻 3 个 `[role=dialog]` 浮层**:"标题 内容 确认"、"标题 内容 取消 确认"、"返回编辑 立即发布"手机预览弹窗。检测"封面弹窗已打开"不能取第一个 `[role=dialog]`,须遍历找含"AI封图"/"本地上传"文本的那个。
+> 9. **(2026-07-15) 手机预览遮罩 `preview-phone-modal` 盖住封面区**:点封面占位会落空。点封面前先点"返回编辑"关掉该遮罩。
 
 ## 一、发布按钮不响应(v7 已解决,原 v6 误判为无解)
 
@@ -15,7 +19,7 @@
 | P2 | `elementFromPoint` 返回 `cheetah-modal-wrap` 而非发布按钮 | 封面弹窗关闭后残留透明 `position: fixed` 遮罩层 | 暴力移除所有 `position: fixed`/`sticky` 元素 |
 | P3 | `elementFromPoint` 返回 `SPAN` 等其他元素 | 另一个 modal 或 tooltip 在发布按钮上方 | 移除所有遮罩层,重试;仍不行则手动 |
 | P4 | CDP `Input.dispatchMouseEvent` 坐标点发布按钮无响应 | 坐标 (1113,888) 处命中 button 内 `<span>发布</span>`,或坐标非元素真实中心 | **已解决**:真实鼠标坐标点击(取按钮 `getBoundingClientRect` 中心,用 `cdpClickEl`);坐标须是元素真实中心,可绕过 span 子节点被 React 正常响应。2026-07-10 18:54 实测确认真实鼠标点击可提交 |
-| P5 | xb click / in-page `button.click()` 点发布按钮无响应 | cheetah 组件对合成事件不响应,仅接受真实 `isTrusted` 鼠标事件 | **已解决**:用 CDP 真实鼠标坐标点击(非 `button.click()`)。⚠️ v7 初版称 `button.click()` 有效——二次实测证明不成立(in-page click 返回 CLICKED 但 URL 不变) |
+| P5 | xb click / in-page `button.click()` 点发布按钮无响应 | cheetah 组件对合成事件不响应,仅接受真实 `isTrusted` 鼠标事件 | **已解决**:用 CDP 真实鼠标坐标点击(非 `button.click()`)。⚠️ v7 初版称 `button.click()` 有效--二次实测证明不成立(in-page click 返回 CLICKED 但 URL 不变) |
 | P0 | 点发布无任何反应(URL 不变、无弹窗) | **真实根因:标题为空**(占位符"请输入标题"被误判为有标题),被"标题必填"校验静默拦截 | 填标题进 React 状态后再 `button.click()`;填法见 T1/T2(CDP insertText 已验证可用) |
 | P6 | 点发布后 dialog 弹出但点"确认"后还是回到编辑页 | 表单校验 dialog,确认后重新验证失败 | 检查 dialog 文本,找到具体错误原因 |
 | P7 | 发布错误信息含"请添加封面" | 封面未真正绑定(AI 生成了但"确定"按钮没点上) | 重新执行封面流程(本地上传方案最稳) |
@@ -30,11 +34,11 @@
 
 | # | 问题 | 根因 | 解决方法 |
 |---|------|------|----------|
-| F1 | 点击“选择封面”后弹窗不打开 | (1) 点到列表容器而非真正占位项(占位项偏左,列表中心会落空);(2) 用 in-page `.click()` 合成事件(cheetah 不响应) | **真实鼠标点击占位项** `DIV.FeEditorApp-_73a3a52aab7e3a36-default`,动态取 `getBoundingClientRect` 中心(用 `cdpClickEl`),禁硬编码 (612,561) |
-| F2 | “AI封图” tab 点击不切换 | 封面弹窗是 cheetah 自研组件,非 Ant Design;tab 用 `[role=tab]` | CDP **真实鼠标**点 `[role=tab]` 的 `getBoundingClientRect` 中心(已验证);in-page `.click()` 无效 |
-| F4 | “根据全文智能生成封面”触发找不到/点了无反应 | 它不是 button,是 `SPAN.FeEditorApp-_6853aa778d53acdc-theme`;v7 初版说的生成 DIV (1153,274) 已失效 | CDP **真实鼠标**点该 SPAN(动态中心);点它即按全文自动生成,无需先填提示词 |
-| F3 | “确定”按钮 disabled（灰色不可点） | 封面图未生成/未选中 | AI:真实鼠标点 SPAN 触发生成,轮询 22s+ 直到文本变“确定 (1)”启用再真实点击 |
-| F4 | 封面弹窗内“根据全文智能生成封面”按钮找不到 | 可能:CSS 隐藏、或未切到 AI 封图 tab | 先切 AI 封图 tab(真实鼠标),再点该 SPAN |
+| F1 | 点击"选择封面"后弹窗不打开 | (1) 点到列表容器而非真正占位项(占位项偏左,列表中心会落空);(2) 用 in-page `.click()` 合成事件(cheetah 不响应) | **真实鼠标点击占位项** `DIV.FeEditorApp-_73a3a52aab7e3a36-default`,动态取 `getBoundingClientRect` 中心(用 `cdpClickEl`),禁硬编码 (612,561) |
+| F2 | "AI封图" tab 点击不切换 | 封面弹窗是 cheetah 自研组件,非 Ant Design;tab 用 `[role=tab]` | CDP **真实鼠标**点 `[role=tab]` 的 `getBoundingClientRect` 中心(已验证);in-page `.click()` 无效 |
+| F4 | "根据全文智能生成封面"触发找不到/点了无反应 | 它不是 button,是 `SPAN.FeEditorApp-_6853aa778d53acdc-theme`;v7 初版说的生成 DIV (1153,274) 已失效 | CDP **真实鼠标**点该 SPAN(动态中心);点它即按全文自动生成,无需先填提示词 |
+| F3 | "确定"按钮 disabled(灰色不可点) | 封面图未生成/未选中 | AI:真实鼠标点 SPAN 触发生成,轮询 22s+ 直到文本变"确定 (1)"启用再真实点击 |
+| F4 | 封面弹窗内"根据全文智能生成封面"按钮找不到 | 可能:CSS 隐藏、或未切到 AI 封图 tab | 先切 AI 封图 tab(真实鼠标),再点该 SPAN |
 | F5 | file input 找不到 | 封面弹窗打开后 file input 可能挂载在 dialog 内,被遮罩遮蔽 | CDP `DOM.getDocument` + `DOM.querySelector('input[type="file"]')` |
 | F6 | CDP `DOM.setFileInputFiles` 成功但"确定"仍 disabled | 上传后需要几秒渲染预览、或图片尺寸/格式不对 | 等 3-5s 再查;确保 JPG 为 3:2 横版(推荐 800x533) |
 | F7 | 封面对话框关闭后残留透明遮罩层 | 图片预览式 modal(`cheetah-modal-wrap`)非组件卸载残留 | 暴力 `display: none` 或 `remove()` 所有 position:fixed |
@@ -105,3 +109,59 @@
 | S5 | 要检查标题字数 | `cdpEval('document.querySelector("#newsTextArea [data-testid=\\"news-title-input\\"] [contenteditable=\\"true\\"]").textContent.length')` |
 | S6 | 要检查正文字数 | `cdpEval('(function(){var d=(document.querySelector("#ueditor_0")||{}).contentDocument;return d?d.body.textContent.length:-1;})()')` |
 | S7 | 要检查发布按钮是否被遮挡 | `cdpEval + elementFromPoint`(参考 workflow.md 第 7.1 节) |
+
+
+## 八、2026-07-15 完整实战问题清单（发布《文言之用》）
+
+> 本次从技能安装到发布成功，共踩 15 个坑，按阶段归纳。核心结论：**cheetah 组件只能用 CDP 真实鼠标坐标点击；选择器不依赖运行时 hash，全部文本/角色动态定位；操作前先排查遮挡层。**
+
+### 阶段一：技能安装与环境（问题 1–3）
+| # | 问题 | 根因 | 解决方法 |
+|---|------|------|----------|
+| 1 | GitHub 下载失败（代理没走通） | 环境里设了代理变量，但 GitHub 走系统 IE 代理 127.0.0.1:2080 才通 | 去掉 shell 代理变量，用系统代理通道重下 |
+| 2 | 脚本硬编码原作者工作区路径 `3af8d089` | 安装后路径与当前 `d0d04e07` 不符 | 全局替换 3 处路径为当前工作区 ID |
+| 3 | 百家号未登录跳登录页 | xb 打开编辑页跳转到登录页 | 用户手动登录确认进后台再继续 |
+
+### 阶段二：初次发布被打回（问题 4–5）
+| # | 问题 | 根因 | 解决方法 |
+|---|------|------|----------|
+| 4 | 原 publish.js 封面坐标硬编码 (612,561) 点不中，被请添加封面拦截 | 坐标写死，实际占位随视口变化 | 改动态取 rect 真实坐标点击（催生 cover_publish.js） |
+| 5 | cover_publish.js 首跑 cdpClickEl 返回 ERR | cheetah 组件两步间重渲染，DOM 节点脱钩 | 改单步 scrollIntoView+取坐标+立即 CDP 点击一步到位 |
+
+### 阶段三：封面点击定位（问题 6–9）
+| # | 问题 | 根因 | 解决方法 |
+|---|------|------|----------|
+| 6 | `indexOf('选择封面')` 命中全屏大容器（1280×610）点空 | 模糊匹配命中含该词的列表容器 | 改精确匹配 `textContent.trim()==='选择封面'` |
+| 7 | 封面区被手机预览遮罩 `preview-phone-modal` 挡住，点击落空 | 遮罩盖在封面上方 | 点封面前先点返回编辑关掉遮罩 |
+| 8 | 前端 class hash 每次加载都变（`_73a3a52aab7e3a36`→`_48bec92b4e533276`） | 写死 hash 后续轮次失效 | 全部改文本/角色动态定位，不依赖 hash |
+| 9 | SKILL.md 占位尺寸/坐标（198×134/(299,305)）过时，实测 612×134/(506,312) | 文档静态坐标与实际不符 | 以动态探测结果为准，不迷信文档 |
+
+### 阶段四：弹窗检测误判（问题 10）
+| # | 问题 | 根因 | 解决方法 |
+|---|------|------|----------|
+| 10 | 检测封面弹窗已打开取第一个 `[role=dialog]`，命中常驻标题 内容 确认浮层误判中止 | 编辑页常驻 3 个 `[role=dialog]` | 遍历所有 dialog，找含AI封图/本地上传文本的才是封面弹窗（COVER_MODAL） |
+
+### 阶段五：发布被遮挡（问题 11–13）
+| # | 问题 | 根因 | 解决方法 |
+|---|------|------|----------|
+| 11 | 封面选择弹窗（fullscreen modal）盖住编辑页发布按钮，点击被吞、页面无变化 | 弹窗未关就点发布 | 点封面确定后先轮询确认弹窗消失，再点编辑页发布（真实坐标约 (800,594)） |
+| 12 | fixed modal 内确定按钮坐标算出 (0,0) | 对 fixed modal 内按钮先 scrollIntoView 反而算出视口外 | modal 内按钮用 noScroll 直接取视口坐标 |
+| 13 | `!!(...)` 布尔判断失灵（xbEval 序列化成字符串） | 字符串比较写成 `=== true` | 改 `=== 'true'` 字符串比较 |
+
+### 阶段六：脚本工程（问题 14–15）
+| # | 问题 | 根因 | 解决方法 |
+|---|------|------|----------|
+| 14 | PowerShell 把命令行内联 JS 当脚本解析报错 | 命令行直接贴 JS 被 shell 解析 | 所有 JS 写进 .js 文件再 `node` 执行 |
+| 15 | 模板字符串拼接缺分号/引号报 SyntaxError | 字符串拼接写错 | 变量分步拼接，写文件后 `node` 验证语法 |
+
+### 最终可用脚本
+- `cover_publish.js`：完整流程（开封面弹窗→切 AI封图→生成→确定→发布），全部动态定位。
+- `finish_publish.js`：封面弹窗已开着时的收尾（先关弹窗→点发布→处理确认）。
+- 核心库 `cdp_lib.js`：CDP 连接 + `cdpEval` + `cdpClickXY` 真实坐标点击。
+
+### 核心经验（五条）
+1. cheetah 组件只能用 CDP 真实鼠标坐标点击，页面内 `click()`/`dispatchEvent` 无效。
+2. 坐标必须 `getBoundingClientRect` 实时取，禁用硬编码；且单步取坐标后立即点击防重渲染脱钩。
+3. 任何选择器不依赖运行时 hash，全部文本/角色/结构动态定位。
+4. 操作前先排查遮挡层（预览遮罩、fullscreen modal），否则点击全落空。
+5. 弹窗/状态检测要区分常驻浮层与业务弹窗，不能取第一个就当真。

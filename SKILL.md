@@ -39,14 +39,14 @@ description: 百家号(baijiahao.baidu.com)文章自动发布流程。通过 xb 
 百家号编辑器(标题框/封面占位/发布按钮)对合成事件(JS `element.click()`、`dispatchEvent`、React 合成事件)基本不响应,**只能用 CDP `Input.dispatchMouseEvent` 真实鼠标坐标点击**,且坐标必须基于元素的 `getBoundingClientRect` 运行时计算(不同分辨率/视口坐标不同,硬编码必然点空)。
 
 真实结构(经 DOM 探测确认):
-- 打开弹窗的占位项:`DIV.FeEditorApp-_73a3a52aab7e3a36-default`(宽约198)。⚠️ 它嵌在列表容器 `FeEditorApp-_93c3fe2a3121c388-list` 内,列表中心约 (506,535) 但真正可点击项中心偏左约 (299,535)--**硬编码 (612,561) 会落空**,必须用元素 rect 动态点击。
+- 打开弹窗的占位项:**动态文本定位**——"选择封面"文字向上找 `-default` 祖先(⚠️ 前端 class hash 每次加载都变,严禁写死 `FeEditorApp-_73a3a52aab7e3a36-default` 这类 hash)。真实可点容器约 612×134、中心约 (506,312)。文档旧写的 198×134/(299,305) 是误判,已作废;但定位一律用文本 + 动态 rect,不依赖任何固定坐标。
 - 提示词 textarea:弹窗内可见 textarea(先 `cdpClickEl` 聚焦,再 `cdpInsertText` 填词)。
 - AI 生成触发:**不是 button,是 `SPAN.FeEditorApp-_6853aa778d53acdc-theme` 文本"根据全文智能生成封面"**(约 viewport (518,230))。点它即按全文自动生成,无需先填提示词。
 - 确定按钮:生成后文本变为"确定 (1)"(注意带空格和数字),须 `indexOf('确定')` 模糊匹配,且同样用真实鼠标点击(坐标处 button 自身为顶层时 CDP 坐标点击有效)。
 
 | 步骤 | 方法 | 选择器(动态取中心,勿硬编码) |
 |------|------|------|
-| 开弹窗 | **真实鼠标点击**占位项 | `document.querySelector('.FeEditorApp-_73a3a52aab7e3a36-default')` |
+| 开弹窗 | **真实鼠标点击**占位项 | 文本定位:`Array.from(document.querySelectorAll('*')).find(e=>e.textContent.trim()==='选择封面')` 再向上找 `-default` 祖先 |
 | 隐藏蓝色提示条 | CDP eval `display:none` | 含"标题功能已合并至文字模板"的条 |
 | 切 AI封图 tab | **真实鼠标点击** `[role=tab]` 文本中心 | `getBoundingClientRect` 取中心 |
 | 触发 AI 生成 | **真实鼠标点击** SPAN(非 button) | `span` 文本"根据全文智能生成封面" |
@@ -71,7 +71,7 @@ Lexical 编辑器不支持 `execCommand('delete')`,Ctrl+A+Delete 是追加而非
 |------|---------|
 | 标题填写 | CDP 坐标点标题框 + Ctrl+A(dispatchKeyEvent)+ Input.insertText(已验证可用,非追加) |
 | 正文设置(UEditor) | CDP eval `editor.setContent(html)` |
-| 封面-打开弹窗 | CDP **真实鼠标**点击占位项 `DIV.FeEditorApp-_73a3a52aab7e3a36-default`(动态取中心,禁硬编码 612,561) |
+| 封面-打开弹窗 | CDP **真实鼠标**点击占位项(动态文本定位 + 动态取中心,禁写死 hash,实测容器约 612×134 中心 (506,312)) |
 | 封面-AI封图 tab | CDP **真实鼠标**点 `[role=tab]` 文本中心 |
 | 封面-AI 生成触发 | CDP **真实鼠标**点 SPAN"根据全文智能生成封面"(非 button,非 1153,274 的 DIV) |
 | 封面-确定按钮 | CDP **真实鼠标**点击(文本"确定 (1)",模糊匹配) |
@@ -117,6 +117,8 @@ skills/baijiahao-publisher/
 ├── scripts/
 │   ├── publish.js               ← ✅ 统一发布入口(标题+正文+AI封面+发布,已验证 E2E)
 │   ├── cdp_lib.js               ← CDP WebSocket 库(connect/click/eval/insertText/setFileInputFiles)✅
+│   ├── cover_publish.js          ← ✅ 完整补封面+发布(AI生成,全动态定位,2026-07-15 验证)
+│   ├── finish_publish.js         ← ✅ 封面弹窗已开时收尾(关弹窗→发布,2026-07-15 验证)
 │   └── _legacy/                 ← v6 旧脚本(已弃用,仅留档)
 │       ├── bjh_cover3_v7bak.js  ← AI封面流程(cheetah结构,验证版备份)
 │       ├── bjh_publish3_v7bak.js← 填标题+发布(验证版备份)
@@ -135,23 +137,21 @@ skills/baijiahao-publisher/
 ## 快速使用
 
 ```bash
-# 1. 安装 ws 模块(首次需要)
-cd C:\Users\菠萝\.qclaw\workspace-agent-3af8d089
-npm install ws
+# 1. 安装 ws 模块(首次需要,依赖 node_modules/ws)
+cd C:\Users\菠萝\.qclaw\workspace-agent-d0d04e07\skills\baijiahao-publisher
+npm install ws   # 若 node_modules/ws 已存在可跳过
 
-# 2. 安装 ws 模块(仅一次,上面已装可跳过)
-npm install ws
+# 2. 完整发布(填标题+正文+AI封面+发布):编辑 publish.js 的 TITLE/正文后再跑
+node scripts/publish.js
 
-# 3. AI 封面(可选,独立脚本)
-node skills/baijiahao-publisher/scripts/bjh_cover3.js
+# 3. 仅补封面+发布(草稿已填好标题正文,只差封面):
+node scripts/cover_publish.js
 
-# 4. 编辑 bjh_publish3.js 配置(TITLE 常量 + 正文 editor.setContent)
-
-# 5. 执行发布(填标题 + 原生 click 发布 + 轮询)
-node skills/baijiahao-publisher/scripts/bjh_publish3.js
+# 4. 封面选择弹窗已开着时的收尾(关弹窗→发布):
+node scripts/finish_publish.js
 ```
 
-> 完整发布链路已打通:封面(bjh_cover3)→ 标题+发布(bjh_publish3)。CDP 端口 9222 需由 xb 启动的 Chrome 提供。
+> 完整发布链路已打通。CDP 端口 9222 需由 xb 启动的 Chrome 提供;百家号需已登录。所有点击用 CDP 真实鼠标坐标(动态 rect),不依赖运行时 class hash。
 
 ## 封面失败时手动操作指引
 

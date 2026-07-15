@@ -1,7 +1,7 @@
-// publish.js — 百家号一键发布 v7（标题+正文+AI封面+发布，已 E2E 验证）
+﻿// publish.js — 百家号一键发布 v7（标题+正文+AI封面+发布，已 E2E 验证）
 // 依赖: ./cdp_lib.js（CDP WebSocket 库）；xb CLI（C:\Users\菠萝\.qclaw\skills\xbrowser\scripts\xb.cjs）
 // 用法:
-//   1. 首次: cd C:\Users\菠萝\.qclaw\workspace-agent-3af8d089 && npm install ws
+//   1. 首次: cd C:\Users\菠萝\.qclaw\workspace-agent-d0d04e07 && npm install ws
 //   2. 改下方 CONFIG（title / bodyHtml / coverMode）
 //   3. 浏览器已打开且 CDP 端口 9222 可用（xb 启动的 Chrome 自带）
 //   4. node skills/baijiahao-publisher/scripts/publish.js
@@ -13,17 +13,20 @@ const cdpLib = require('./cdp_lib.js');
 
 const HOME = process.env.USERPROFILE;
 const XB = path.join(HOME, '.qclaw', 'skills', 'xbrowser', 'scripts', 'xb.cjs');
-const SAVE = path.join(HOME, '.qclaw', 'workspace-agent-3af8d089') + '\\';
-const COVER_JPG = path.join(HOME, '.qclaw', 'workspace-agent-3af8d089', 'cover.jpg');
+const SAVE = path.join(HOME, '.qclaw', 'workspace-agent-d0d04e07') + '\\';
+const COVER_JPG = path.join(HOME, '.qclaw', 'workspace-agent-d0d04e07', 'cover.jpg');
 const EDIT_URL = 'https://baijiahao.baidu.com/builder/rc/edit?type=news';
 
 // ===================== 配置区（每次发布改这里） =====================
 const CONFIG = {
-  title: '京东外卖强势入局',          // 标题 ≤64 字
+  title: '文言文之用',                // 标题 ≤64 字
   // 正文：HTML 字符串，每段用 <p> 包裹
   bodyHtml: [
-    '<p>京东外卖的强势入局，正在重塑中国即时零售行业的竞争格局。</p>',
-    '<p>依托京东成熟的供应链与仓配体系，京东外卖以“品质外卖”切入，直击用户对食品安全与配送时效的核心诉求。</p>',
+    '<p>文言文者，华夏千古之雅言也。自先秦诸子以降，经史子集，皆赖此以传。其辞约而旨远，其韵雅而意深，诚中华文脉之所系也。</p>',
+    '<p>或问：今白话通行于世，何必尚文言？应之曰：文言非陈迹也，乃民族精神之根柢。读《论语》而知仁，诵《楚辞》而见志，览《史记》而识治乱。不通文言，则无以接古人，无以明来历。</p>',
+    '<p>且文言贵简，一言而含数义，最利思辨。今人作文，每患冗长；若能取法文言，删繁就简，则其文清通，其理易明。故文言之于今，非徒复古，亦资为文之法度也。</p>',
+    '<p>然学文言，贵得其神而非泥其形。先诵名篇，渐通训诂，久而自能运于笔端。不必句摹字拟，而气韵自在。如是，则古人之智可汲，今人之言可观，文脉相承，薪火不绝矣。</p>',
+    '<p>嗟乎！语言者，文化之舟也。文言既明，则典籍可读，传统可续。愿世之学者，勿以文言为艰远，日诵一章，岁积一得，庶几可观乎斯文之盛也。</p>',
   ].join(''),
   coverMode: 'ai',                    // 'ai'（AI生成）| 'upload'（本地图）| 'skip'（跳过）
   cdpPort: 9222,                       // CDP 端口（xb 启动的 Chrome 默认 9222）
