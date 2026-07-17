@@ -1,12 +1,12 @@
-# 百家号发布 - 工作流程 v6(2026-07-07 验证 / v7 修正 2026-07-10)
+﻿# 百家号发布 - 工作流程（2026-07-15 实测修正版）
 
 > ⚠️ v7 修正(2026-07-10 已 E2E 验证《京东外卖强势入局》发布成功):
-> - 封面弹窗是 **cheetah 自研组件(非 antd)**。真实元素:打开弹窗占位 `DIV.FeEditorApp-_73a3a52aab7e3a36-default`、AI 生成触发是 `SPAN.FeEditorApp-_6853aa778d53acdc-theme` 文本“根据全文智能生成封面”(非 button、非 1153,274 的 DIV);“确定”按钮生成后文本为“确定 (1)”。
-> - **v7 初版坐标 (612,561)/(1153,274)/(1384,752) 已失效**——2026-07-10 18:5x 二次实测:占位真实中心偏左(约299,535),硬编码必点空。所有点击须用 CDP **真实鼠标坐标**,坐标动态取 `getBoundingClientRect` 中心(见 `cdpClickEl`),禁硬编码、禁 in-page `.click()`。
+> - 封面弹窗是 **cheetah 自研组件(非 antd)**。占位项、AI 生成触发(SPAN"根据全文智能生成封面")、"确定 (1)"按钮均用文本/角色动态定位,禁写死运行时 class hash。
+> - **所有点击用 CDP 真实鼠标坐标**(Input.dispatchMouseEvent),坐标动态取 getBoundingClientRect 中心(见 cdpClickEl),禁硬编码坐标、禁 in-page .click()/dispatchEvent。
 > - 标题用 **CDP Input.insertText**(Ctrl+A 选中后替换,非追加)已验证可用。
 > - **标题/封面缺失才是发布被静默拦截真因**,不是遮罩层。
 > - 发布按钮:2026-07-10 17:07 发布时疑似原生 `button.click()` 有效;但 **18:54 二次实测证明 in-page `button.click()` 对 cheetah 不提交**,须用 CDP 真实鼠标坐标点击(见第七.1)。
-> 完整可用脚本见 `scripts/bjh_publish3.js`(填标题+发布) 与 `scripts/bjh_cover3.js`(AI封面)。
+> 完整可用脚本:`scripts/publish.js`(全流程)、`scripts/cover_publish.js`(补封面+发布)、`scripts/finish_publish.js`(弹窗已开时收尾)。
 
 ## v6 更新要点
 
@@ -58,10 +58,10 @@
 
 ## 一、打开发布页
 
-xb CLI 用 `open` 命令（不支持 `navigate`）：
+用 CDP `Page.navigate` 导航：
 
 ```javascript
-await xb(['run', '--browser', 'chrome', 'open', 'https://baijiahao.baidu.com/builder/rc/edit?type=news&t=' + Date.now()]);
+await cdp('Page.navigate', { url: 'https://baijiahao.baidu.com/builder/rc/edit?type=news&t=' + Date.now() });
 await sleep(8000);
 
 // 等待编辑器加载完成
@@ -84,17 +84,7 @@ for (let i = 0; i < 40; i++) {
 3. **引导遮罩** — 需移除或点掉
 
 ```javascript
-// 方法 A：xb snapshot 找 ref
-const data = await snapshot();
-const refs = data.refs || {};
-for (const [ref, v] of Object.entries(refs)) {
-  if (v.role === 'button' && v.name && v.name.includes('我知道了')) {
-    await xb(['run', '--browser', 'chrome', 'click', ref], 15000);
-    await sleep(1500);
-  }
-}
-
-// 方法 B：CDP eval 定位
+// CDP eval 定位“我知道了”并真实鼠标点击
 const ikPos = await cdpEval(`(function(){
   var B = document.querySelectorAll("button");
   for(var b of B){
@@ -192,17 +182,7 @@ await cdpEval('window.scrollTo(0, 700)');
 await sleep(500);
 
 // 2. 点击"选择封面"打开弹窗
-await cdpClickBy(`(function(){
-  var wa = document.createTreeWalker(document.body, 4, null, false);
-  var n;
-  while(n = wa.nextNode()){
-    if(n.textContent.trim() === "选择封面"){
-      var r = n.parentElement.getBoundingClientRect();
-      return JSON.stringify({x:r.x+r.width/2, y:r.y+r.height/2});
-    }
-  }
-  return "NF";
-})()`);
+await cdpClickEl(sock, "(function(){var wa=document.createTreeWalker(document.body,4,null,false);var n;while(n=wa.nextNode()){if(n.textContent.trim()==='选择封面')return n.parentElement;}return null;})()");
 await sleep(3000);
 
 // 3. 找 file input 并上传
@@ -218,32 +198,24 @@ await cdp('DOM.setFileInputFiles', {
 await sleep(3000);
 
 // 4. 确认按钮（上传后自动激活 Enabled）
-await cdpClickBy(`(function(){
-  var B = document.querySelectorAll("button");
-  for(var b of B){
-    if(b.textContent.indexOf("确定") !== -1 && !b.disabled){
-      return JSON.stringify({x:Math.round(b.getBoundingClientRect().x+b.getBoundingClientRect().width/2), y:Math.round(b.getBoundingClientRect().y+b.getBoundingClientRect().height/2)});
-    }
-  }
-  return "NF";
-})()`);
+await cdpClickEl(sock, "(function(){var B=document.querySelectorAll('button');for(var i=0;i<B.length;i++){var b=B[i];if(b.textContent.indexOf('确定')!==-1&&!b.disabled&&b.offsetWidth>0)return b;}return null;})()");
 await sleep(3000);
 ```
 
-### 6.2 方案 B：AI 封面（2026-07-10 第二次实测修正，已跑通）
+### 6.2 方案 B：AI 封面（2026-07-15 实测跑通）
 
-> ⚠️ v7 初版坐标 (612,561)/(1153,274)/(1384,752) 与“生成按钮是 DIV”等结论已失效。
-> 百家号编辑器对合成事件（JS `element.click()`、`dispatchEvent`）基本不响应，
-> **封面各步一律用 CDP 真实鼠标坐标点击，坐标动态取 `getBoundingClientRect` 中心**（cdp_lib 的 `cdpClickEl`）。
+> 封面各步一律用 CDP 真实鼠标坐标点击,选择器用文本/角色定位,禁写死运行时 class hash。
+> **封面各步一律用 CDP 真实鼠标坐标点击，坐标动态取 `getBoundingClientRect` 中心**（cdp_lib 的 `cdpClickEl`）；
+> 选择器用文本/角色定位，禁写死运行时 class hash（`FeEditorApp-*` hash 每次加载都变）。
 
 ```javascript
 // 前置：npm install ws；cdp 连接后拿到 sock
 
 // 0. 若封面弹窗未开，先真实点击占位项打开
-//    占位项真实元素：DIV.FeEditorApp-_73a3a52aab7e3a36-default
-//    ⚠️ 它嵌在列表容器内，列表中心约(506,535)但真正可点项中心偏左约(299,535)，
-//       硬编码(612,561)必然点空，必须用元素 rect 动态点击。
-await cdpClickEl(sock, "document.querySelector('.FeEditorApp-_73a3a52aab7e3a36-default')");
+//    占位项 class hash 每次加载都变，禁写死；用文本"选择封面"向上找 `-default` 祖先
+//    实测容器约 612×134、中心约 (506,312),必须用元素 rect 动态取中心。
+//    占位项 class hash 每次加载都变,用文本"选择封面"向上找 -default 祖先。
+await cdpClickEl(sock, "(function(){var a=Array.from(document.querySelectorAll('*')).find(function(e){return e.textContent.trim()==='选择封面';});var n=a;while(n&&!(n.className&&String(n.className).indexOf('-default')!==-1))n=n.parentElement;return n||a;})()");
 await sleep(2500);
 
 // 1. 隐藏蓝色提示条（含“标题功能已合并至文字模板”）
@@ -286,7 +258,7 @@ await sleep(3000);
 **核心要点**：
 - 标题框、封面占位、AI 生成 SPAN、确定按钮、发布按钮——全部走 CDP 真实鼠标坐标点击，禁 in-page `.click()`。
 - 坐标基于元素 `getBoundingClientRect` 运行时计算（用 `cdpClickEl`），绝不硬编码。
-- AI 生成触发元素是 SPAN“根据全文智能生成封面”，不是 button、不是 `(1153,274)` 的 DIV。
+- AI 生成触发元素是 SPAN“根据全文智能生成封面”，不是 button（用文本定位，禁写死坐标/hash）。
 - 生成完成后按钮文字是“确定 (1)”，检测用 `indexOf('确定')`。
 
 ---

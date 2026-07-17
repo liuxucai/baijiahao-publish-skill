@@ -4,7 +4,7 @@ const cp = require('child_process');
 const cdpLib = require('./cdp_lib.js');
 const HOME = process.env.USERPROFILE;
 const XB = path.join(HOME, '.qclaw', 'skills', 'xbrowser', 'scripts', 'xb.cjs');
-const SAVE = path.join(HOME, '.qclaw', 'workspace-agent-d0d04e07') + '\\';
+const SAVE = path.join(HOME, '.qclaw', 'baijiahao_skill') + '\\';
 const CDP_PORT = 9222;
 function b64(js){return Buffer.from(js).toString('base64');}
 function xbEval(js){try{const r=cp.execFileSync('node',[XB,'run','--browser','chrome','eval','--base64',b64(js)],{encoding:'utf8',timeout:20000});try{const o=JSON.parse(r);return o.data&&o.data.result&&o.data.result.data&&o.data.result.data.result;}catch(e){return (r||'NF').toString().substring(0,200);}}catch(e){return 'EX:'+e.message.substring(0,60);}}

@@ -1,6 +1,6 @@
----
+﻿---
 name: baijiahao-publisher
-description: 百家号(baijiahao.baidu.com)文章自动发布流程。通过 xb CLI + CDP WebSocket 混合驱动 Chrome。适用 Windows + Chrome + xb CLI v0.25.3。触发词:百家号发布、baijiahao、发布文章到百家号。
+description: 百家号(baijiahao.baidu.com)文章自动发布流程。通过 isolated-browser 拉起隔离 Chrome + CDP WebSocket 驱动。适用 Windows + 稳定版 Chrome + isolated-browser skill。触发词:百家号发布、baijiahao、发布文章到百家号。
 ---
 
 # 百家号文章自动发布 Skill(v7,2026-07-10 完整打通)
@@ -39,7 +39,7 @@ description: 百家号(baijiahao.baidu.com)文章自动发布流程。通过 xb 
 百家号编辑器(标题框/封面占位/发布按钮)对合成事件(JS `element.click()`、`dispatchEvent`、React 合成事件)基本不响应,**只能用 CDP `Input.dispatchMouseEvent` 真实鼠标坐标点击**,且坐标必须基于元素的 `getBoundingClientRect` 运行时计算(不同分辨率/视口坐标不同,硬编码必然点空)。
 
 真实结构(经 DOM 探测确认):
-- 打开弹窗的占位项:**动态文本定位**——"选择封面"文字向上找 `-default` 祖先(⚠️ 前端 class hash 每次加载都变,严禁写死 `FeEditorApp-_73a3a52aab7e3a36-default` 这类 hash)。真实可点容器约 612×134、中心约 (506,312)。文档旧写的 198×134/(299,305) 是误判,已作废;但定位一律用文本 + 动态 rect,不依赖任何固定坐标。
+- 打开弹窗的占位项:**动态文本定位**——"选择封面"文字向上找 `-default` 祖先(⚠️ 前端 class hash 每次加载都变,严禁写死 `FeEditorApp-*` 这类 hash)。真实可点容器约 612×134、中心约 (506,312)。文档旧写的 198×134/(299,305) 是误判,已作废;但定位一律用文本 + 动态 rect,不依赖任何固定坐标。
 - 提示词 textarea:弹窗内可见 textarea(先 `cdpClickEl` 聚焦,再 `cdpInsertText` 填词)。
 - AI 生成触发:**不是 button,是 `SPAN.FeEditorApp-_6853aa778d53acdc-theme` 文本"根据全文智能生成封面"**(约 viewport (518,230))。点它即按全文自动生成,无需先填提示词。
 - 确定按钮:生成后文本变为"确定 (1)"(注意带空格和数字),须 `indexOf('确定')` 模糊匹配,且同样用真实鼠标点击(坐标处 button 自身为顶层时 CDP 坐标点击有效)。
@@ -63,7 +63,7 @@ description: 百家号(baijiahao.baidu.com)文章自动发布流程。通过 xb 
 
 Lexical 编辑器不支持 `execCommand('delete')`,Ctrl+A+Delete 是追加而非替换。
 
-**唯一可靠**:`Ctrl+A → type`(xb type 天然替换选区)。如果标题累积过长(服务端草稿恢复),刷新页面也不行,需清除 `localStorage` + `sessionStorage` 后重新打开。
+**唯一可靠**:`Ctrl+A → type`(CDP Input.insertText 天然替换选区,非追加)。如果标题累积过长(服务端草稿恢复),刷新页面也不行,需清除 `localStorage` + `sessionStorage` 后重新打开。
 
 ### 🟢 CDP vs xb 选择策略(2026-07-10 第二次实测修正)
 
@@ -77,7 +77,7 @@ Lexical 编辑器不支持 `execCommand('delete')`,Ctrl+A+Delete 是追加而非
 | 封面-确定按钮 | CDP **真实鼠标**点击(文本"确定 (1)",模糊匹配) |
 | 封面-文件上传 | CDP DOM.setFileInputFiles(兜底方案) |
 | 发布按钮 | CDP **真实鼠标**点击(坐标点 center)--⚠️ in-page `button.click()` 对 cheetah 组件无效,18:54 实测须真实鼠标点击才提交 |
-| 页面导航 | xb open 或 CDP Page.navigate |
+| 页面导航 | CDP Page.navigate |
 
 ## 完整流程(按 v7 实测修正)
 
@@ -87,11 +87,11 @@ Lexical 编辑器不支持 `execCommand('delete')`,Ctrl+A+Delete 是追加而非
 3. [可选] 清除 storage 再刷新--本次发布未清除也成功,仅标题累积乱码时再用
 4. 填标题:CDP 坐标点标题框(756,257)→ Ctrl+A(dispatchKeyEvent)→ Input.insertText 写入(勿用 Delete)
    ⚠️ 必须确认标题真进了 React 状态,别被占位符"请输入标题"误导(曾误判成 17 字)
-5. 填正文:xb eval `editor.setContent(html)`(UEditor)
+5. 填正文:CDP eval `editor.setContent(html)`(UEditor)
 6. 设置封面(cheetah 自研组件,非 antd,2026-07-10 第二次实测修正):
    核心:全部用 CDP **真实鼠标坐标点击** + 动态取中心(cdpClickEl),禁硬编码坐标、禁 in-page .click()。
    方案A(本地上传兜底):真实点击占位项 → 切"本地上传"tab → CDP DOM.setFileInputFiles → 真实点击"确定"
-   方案B(AI生成,已打通):真实点击占位项 `DIV.FeEditorApp-_73a3a52aab7e3a36-default` → 隐藏提示条(含"标题功能已合并至文字模板")
+   方案B(AI生成,已打通):真实点击占位项(动态文本定位:"选择封面"文字向上找 `-default` 祖先,禁写死 hash) → 隐藏提示条(含"标题功能已合并至文字模板")
      → 真实点击"AI封图"tab → 真实点击 SPAN"根据全文智能生成封面"(自动按全文生成,无需填提示词)
      → 轮询"确定 (1)"启用 → 真实点击"确定 (1)"
 7. [实测非必需] 移除 fixed 遮罩层--之前误判为根因,实际发布被拦截是因标题/封面缺失
@@ -103,11 +103,33 @@ Lexical 编辑器不支持 `execCommand('delete')`,Ctrl+A+Delete 是追加而非
 
 | 项目 | 要求 |
 |------|------|
-| 浏览器 | 正式版 Chrome / Edge |
-| 控制工具 | xb CLI `0.25.3` + Node.js `ws` 模块 |
-| 路径 | xb: `skills\xbrowser\scripts\xb.cjs` |
-| CDP | Chrome 需以 `--remote-debugging-port=9222` 启动或通过 xb 启动 |
-| 运行环境 | Node.js 脚本(不要从 PowerShell 直接调 xb) |
+| 浏览器 | 正式版 Chrome / Edge(稳定版) |
+| 启用浏览器 | **isolated-browser skill**:`node skills/isolated-browser/scripts/launch.js` 拉起隔离 Chrome |
+| 控制工具 | Node.js `ws` 模块(CDP 直连) |
+| 路径 | isolated-browser: `skills/isolated-browser/scripts/launch.js` |
+| CDP | 由 isolated-browser 拉起的隔离 Chrome 以 `--remote-debugging-port=9222` 常驻提供(隔离 profile `~/.chrome_qclaw_stable`,不碰用户浏览器) |
+| 运行环境 | Node.js 脚本(不要从 PowerShell 直接调 xb/agent-browser 交互) |
+
+## 启用浏览器(isolated-browser)
+
+> **此 skill 不自带浏览器启动逻辑**:启用浏览器统一调用 `isolated-browser` skill,由其拉起一个与用户默认浏览器完全隔离的 Chrome 实例并常驻 CDP。发布脚本只通过 CDP(9222)直连驱动,不依赖 xb 的浏览器托管。
+
+> **若 `isolated-browser` skill 未安装**：从 GitHub 安装 `https://github.com/liuxucai/isolated-browser-skill`（clone 或下载 ZIP 解压到 skills/isolated-browser），安装后即可调用其 `scripts/launch.js` 拉起隔离 Chrome。
+
+```bash
+# 1) 拉起隔离 Chrome(固定 profile ~/.chrome_qclaw_stable + CDP 端口 9222 常驻)
+node skills/isolated-browser/scripts/launch.js
+#    -> 打开百家号后台登录页,手动登录(不填密码),确认进后台首页
+
+# 2) 跑发布脚本(脚本内 CDP 直连 127.0.0.1:9222,无需再过 isolated-browser)
+node scripts/publish.js
+```
+
+关键点:
+- isolated-browser 用 `--user-data-dir=~/.chrome_qclaw_stable` 隔离 profile,与用户 Chrome 不串登录态,可长期复用、免重复登录。
+- 浏览器实例后台常驻(detached + `child.unref()`),脚本退出也不会被杀。
+- 发布脚本的 `cdpConnect()` 连 `ws://127.0.0.1:9222` 即驱动该隔离实例,百家号需已登录。
+- 环境变量可覆盖:`ISOB_CDP_PORT`(默认 9222)、`ISOB_PROFILE_DIR`(默认 `~/.chrome_qclaw_stable`)。
 
 ## 文件结构
 
@@ -118,27 +140,20 @@ skills/baijiahao-publisher/
 │   ├── publish.js               ← ✅ 统一发布入口(标题+正文+AI封面+发布,已验证 E2E)
 │   ├── cdp_lib.js               ← CDP WebSocket 库(connect/click/eval/insertText/setFileInputFiles)✅
 │   ├── cover_publish.js          ← ✅ 完整补封面+发布(AI生成,全动态定位,2026-07-15 验证)
-│   ├── finish_publish.js         ← ✅ 封面弹窗已开时收尾(关弹窗→发布,2026-07-15 验证)
-│   └── _legacy/                 ← v6 旧脚本(已弃用,仅留档)
-│       ├── bjh_cover3_v7bak.js  ← AI封面流程(cheetah结构,验证版备份)
-│       ├── bjh_publish3_v7bak.js← 填标题+发布(验证版备份)
-│       ├── lib_v6.js            ← v6 封装库(含 killOverlays 等已弃用方案)
-│       └── cover_v6.js          ← v6 封面模块
+│   └── finish_publish.js         ← ✅ 封面弹窗已开时收尾(关弹窗→发布,2026-07-15 验证)
 ├── references/
 │   ├── workflow.md             ← 详细步骤
 │   ├── troubleshooting.md      ← 问题与方案
-│   └── commands.md             ← xb CLI 命令参考
-├── templates/
-│   └── article.txt             ← 文章模板
-└── assets/
-    └── baijiahao_publish_guide.md  ← 完整流程文档
+│   └── commands.md             ← 浏览器启用 + CDP 命令参考
+└── templates/
+    └── article.txt             ← 文章模板
 ```
 
 ## 快速使用
 
 ```bash
 # 1. 安装 ws 模块(首次需要,依赖 node_modules/ws)
-cd C:\Users\菠萝\.qclaw\workspace-agent-d0d04e07\skills\baijiahao-publisher
+cd <本 skill 目录>  # 即 skills/baijiahao-publisher
 npm install ws   # 若 node_modules/ws 已存在可跳过
 
 # 2. 完整发布(填标题+正文+AI封面+发布):编辑 publish.js 的 TITLE/正文后再跑
@@ -151,7 +166,7 @@ node scripts/cover_publish.js
 node scripts/finish_publish.js
 ```
 
-> 完整发布链路已打通。CDP 端口 9222 需由 xb 启动的 Chrome 提供;百家号需已登录。所有点击用 CDP 真实鼠标坐标(动态 rect),不依赖运行时 class hash。
+> 完整发布链路已打通。CDP 端口 9222 需由 **isolated-browser 拉起的隔离 Chrome** 提供(运行 `node skills/isolated-browser/scripts/launch.js`);百家号需已登录。所有点击用 CDP 真实鼠标坐标(动态 rect),不依赖运行时 class hash。
 
 ## 封面失败时手动操作指引
 

@@ -1,14 +1,26 @@
-# xb CLI 命令参考（v6，2026-07-07）
+# 命令参考（v6，2026-07-07；2026-07-15 更新浏览器启用方式）
+
+## 启用浏览器（isolated-browser，非 xb）
+
+> 本 skill 的浏览器**统一由 isolated-browser skill 拉起**,不再依赖 xb 托管 Chrome。xb 有安全锁:检测到用户已在跑 Chrome/Edge 会拒绝另起实例,因此改走隔离实例 + CDP 直连路线。
+
+```bash
+# 拉起隔离 Chrome(固定 profile ~/.chrome_qclaw_stable + CDP 端口 9222 常驻),手动登录百家号
+node skills/isolated-browser/scripts/launch.js
+```
+
+隔离 Chrome 以 `--remote-debugging-port=9222` 常驻提供 CDP;后续发布脚本经 `ws://127.0.0.1:9222` 直连驱动。
 
 ## 版本
 
-- xb CLI: `0.25.3`
-- 路径: `C:\Users\菠萝\.qclaw\skills\xbrowser\scripts\xb.cjs`
+- 启用浏览器: `isolated-browser` skill(via `skills/isolated-browser/scripts/launch.js`)
+- CDP 驱动: Node.js `ws` 模块
+- 以下 xb CLI 参考保留作诊断/备选(正式流程不以 xb 启动浏览器)
 
-## xb CLI 命令
+## xb CLI 命令（诊断/备选，非正式流程）
 
 ```bash
-node xb.cjs run --browser chrome open <url>      # 打开 URL（xb 不支持 navigate）
+node xb.cjs run --browser chrome open <url>      # 打开 URL（xb 不支持 navigate，需用户先关自己 Chrome）
 node xb.cjs run --browser chrome screenshot        # 截图
 node xb.cjs run --browser chrome snapshot          # 快照（获取 ref + 页面结构）
 node xb.cjs run --browser chrome click <ref|selector> # 点击元素

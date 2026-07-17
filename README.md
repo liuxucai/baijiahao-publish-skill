@@ -3,8 +3,8 @@
 一键把文章发布到百家号：标题（Lexical）→ 正文（UEditor）→ 封面（AI生成/本地上传）→ 发布（原生 click）。
 
 ## 前置条件
-1. Node.js + `ws` 模块：`cd C:\Users\菠萝\.qclaw\workspace-agent-3af8d089 && npm install ws`
-2. xb CLI 已安装（`C:\Users\菠萝\.qclaw\skills\xbrowser\scripts\xb.cjs`）
+1. Node.js + `ws` 模块：进入本 skill 目录执行 `npm install ws`（依赖 node_modules/ws）
+2. 已安装 isolated-browser skill（由其拉起隔离 Chrome，提供 CDP 9222）
 3. 浏览器已用 xb 打开百家号编辑页，且 CDP 端口 `9222` 可用（xb 启动的 Chrome 自带）
 4. 百家号已登录（登录态在 Chrome profile）
 

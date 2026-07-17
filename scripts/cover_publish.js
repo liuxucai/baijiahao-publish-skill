@@ -6,7 +6,7 @@ const cdpLib = require('./cdp_lib.js');
 
 const HOME = process.env.USERPROFILE;
 const XB = path.join(HOME, '.qclaw', 'skills', 'xbrowser', 'scripts', 'xb.cjs');
-const SAVE = path.join(HOME, '.qclaw', 'workspace-agent-d0d04e07') + '\\';
+const SAVE = path.join(HOME, '.qclaw', 'baijiahao_skill') + '\\';
 const CDP_PORT = 9222;
 const EDIT_URL = 'https://baijiahao.baidu.com/builder/rc/edit?type=news';
 

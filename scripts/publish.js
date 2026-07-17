@@ -1,9 +1,9 @@
 ﻿// publish.js — 百家号一键发布 v7（标题+正文+AI封面+发布，已 E2E 验证）
-// 依赖: ./cdp_lib.js（CDP WebSocket 库）；xb CLI（C:\Users\菠萝\.qclaw\skills\xbrowser\scripts\xb.cjs）
+// 依赖: ./cdp_lib.js（CDP WebSocket 库）；浏览器由 isolated-browser skill 拉起cripts\xb.cjs）
 // 用法:
-//   1. 首次: cd C:\Users\菠萝\.qclaw\workspace-agent-d0d04e07 && npm install ws
+//   1. 首次: 进入本 skill 目录执行 npm install ws（依赖 node_modules/ws）
 //   2. 改下方 CONFIG（title / bodyHtml / coverMode）
-//   3. 浏览器已打开且 CDP 端口 9222 可用（xb 启动的 Chrome 自带）
+//   3. 浏览器已打开且 CDP 端口 9222 可用（isolated-browser 拉起的隔离 Chrome 自带）
 //   4. node skills/baijiahao-publisher/scripts/publish.js
 
 const cp = require('child_process').execFileSync;
@@ -13,8 +13,8 @@ const cdpLib = require('./cdp_lib.js');
 
 const HOME = process.env.USERPROFILE;
 const XB = path.join(HOME, '.qclaw', 'skills', 'xbrowser', 'scripts', 'xb.cjs');
-const SAVE = path.join(HOME, '.qclaw', 'workspace-agent-d0d04e07') + '\\';
-const COVER_JPG = path.join(HOME, '.qclaw', 'workspace-agent-d0d04e07', 'cover.jpg');
+const SAVE = path.join(HOME, '.qclaw', 'baijiahao_skill') + '\\';
+const COVER_JPG = path.join(HOME, '.qclaw', 'baijiahao_skill', 'cover.jpg');
 const EDIT_URL = 'https://baijiahao.baidu.com/builder/rc/edit?type=news';
 
 // ===================== 配置区（每次发布改这里） =====================
@@ -29,7 +29,7 @@ const CONFIG = {
     '<p>嗟乎！语言者，文化之舟也。文言既明，则典籍可读，传统可续。愿世之学者，勿以文言为艰远，日诵一章，岁积一得，庶几可观乎斯文之盛也。</p>',
   ].join(''),
   coverMode: 'ai',                    // 'ai'（AI生成）| 'upload'（本地图）| 'skip'（跳过）
-  cdpPort: 9222,                       // CDP 端口（xb 启动的 Chrome 默认 9222）
+  cdpPort: 9222,                       // CDP 端口（isolated-browser 拉起的隔离 Chrome 默认 9222）
 };
 // ====================================================================
 
