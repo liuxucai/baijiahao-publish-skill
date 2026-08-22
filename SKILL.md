@@ -3,7 +3,7 @@ name: baijiahao-publisher
 description: 百家号(baijiahao.baidu.com)文章自动发布流程。通过 isolated-browser 拉起隔离 Chrome + CDP WebSocket 驱动。适用 Windows + 稳定版 Chrome + isolated-browser skill。触发词:百家号发布、baijiahao、发布文章到百家号。
 ---
 
-# 百家号文章自动发布 Skill(v7,2026-07-10 完整打通)
+# 百家号文章自动发布 Skill(v3,2026-08-21 修正:自包含纯 CDP + 封面定位修正)
 
 ## 适用场景
 
@@ -11,7 +11,9 @@ description: 百家号(baijiahao.baidu.com)文章自动发布流程。通过 iso
 - 处理标题(Lexical 编辑器)、正文(UEditor iframe)、封面设置
 - 支持本地文件上传封面和 AI 智能生成封面两种策略
 
-## 关键发现更新(v7,2026-07-10 完整打通)
+## 关键发现更新(v3,2026-08-21 修正:自包含纯 CDP,封面占位定位修正)
+
+> 历史:2026-07-10 v7 已打通发布全流程;2026-08-21 重写为自包含纯 CDP(不再依赖 xbrowser),并修正封面占位定位为“内层 ~198px 卡片”。
 
 ### ✅ 核心难题已解决(v7,2026-07-10):发布全流程自动化
 
@@ -32,21 +34,25 @@ description: 百家号(baijiahao.baidu.com)文章自动发布流程。通过 iso
 
 **关键发现**:封面弹窗是百家号**自研 cheetah/FeEditorApp 组件**,所有 `.ant-modal` 选择器都失效。
 
-⚠️ **v7 初版坐标已失效(2026-07-10 18:5x 二次实测)**:以下为修正后的可靠方法。
+⚠️ **核心修正（2026-08-21 实战验证）**:封面占位真实可点元素**不是**“选择封面”文字向上找的 `-default` 外层容器（612×134，点它不开弹窗），而是该文字所在的**内层 ~198×134 卡片本身**。`querySelectorAll('*')` 遍历顺序是外层先于内层，若用“向上找 `-default` 祖先”会停在 612px 非可点容器，导致点击落空（这正是之前 publish.js 报错“封面弹窗未正确打开”的根因）。
 
-**核心原则:真实鼠标坐标点击 + 动态取中心,禁硬编码坐标、禁 in-page `.click()`**
+**正确定位器（精确文本 + 宽度过滤，取最窄者）**:
+```js
+// 真实可点的是内层 ~198px 卡片；别用“向上找 -default 祖先”（会取到 612px 外层）
+var els=Array.from(document.querySelectorAll('*'));
+var c=els.filter(function(e){
+  return (e.textContent||'').trim()==='选择封面'
+    && e.getBoundingClientRect().width>100 && e.getBoundingClientRect().width<400;
+});
+c.sort(function(a,b){return a.getBoundingClientRect().width-b.getBoundingClientRect().width;});
+return c[0]; // 最内层卡片
+```
 
-百家号编辑器(标题框/封面占位/发布按钮)对合成事件(JS `element.click()`、`dispatchEvent`、React 合成事件)基本不响应,**只能用 CDP `Input.dispatchMouseEvent` 真实鼠标坐标点击**,且坐标必须基于元素的 `getBoundingClientRect` 运行时计算(不同分辨率/视口坐标不同,硬编码必然点空)。
+**核心原则:真实鼠标坐标点击 + 动态取中心,禁硬编码坐标、禁 in-page `.click()`、禁写死 `-default`/hash**
 
-真实结构(经 DOM 探测确认):
-- 打开弹窗的占位项:**动态文本定位**——"选择封面"文字向上找 `-default` 祖先(⚠️ 前端 class hash 每次加载都变,严禁写死 `FeEditorApp-*` 这类 hash)。真实可点容器约 612×134、中心约 (506,312)。文档旧写的 198×134/(299,305) 是误判,已作废;但定位一律用文本 + 动态 rect,不依赖任何固定坐标。
-- 提示词 textarea:弹窗内可见 textarea(先 `cdpClickEl` 聚焦,再 `cdpInsertText` 填词)。
-- AI 生成触发:**不是 button,是 `SPAN.FeEditorApp-_6853aa778d53acdc-theme` 文本"根据全文智能生成封面"**(约 viewport (518,230))。点它即按全文自动生成,无需先填提示词。
-- 确定按钮:生成后文本变为"确定 (1)"(注意带空格和数字),须 `indexOf('确定')` 模糊匹配,且同样用真实鼠标点击(坐标处 button 自身为顶层时 CDP 坐标点击有效)。
-
-| 步骤 | 方法 | 选择器(动态取中心,勿硬编码) |
+| 步骤 | 方法 | 选择器/定位器 |
 |------|------|------|
-| 开弹窗 | **真实鼠标点击**占位项 | 文本定位:`Array.from(document.querySelectorAll('*')).find(e=>e.textContent.trim()==='选择封面')` 再向上找 `-default` 祖先 |
+| 开弹窗 | **真实鼠标点击**内层卡片 | 精确文本`选择封面`+宽度过滤(100~400)取最窄者 |
 | 隐藏蓝色提示条 | CDP eval `display:none` | 含"标题功能已合并至文字模板"的条 |
 | 切 AI封图 tab | **真实鼠标点击** `[role=tab]` 文本中心 | `getBoundingClientRect` 取中心 |
 | 触发 AI 生成 | **真实鼠标点击** SPAN(非 button) | `span` 文本"根据全文智能生成封面" |
@@ -71,7 +77,7 @@ Lexical 编辑器不支持 `execCommand('delete')`,Ctrl+A+Delete 是追加而非
 |------|---------|
 | 标题填写 | CDP 坐标点标题框 + Ctrl+A(dispatchKeyEvent)+ Input.insertText(已验证可用,非追加) |
 | 正文设置(UEditor) | CDP eval `editor.setContent(html)` |
-| 封面-打开弹窗 | CDP **真实鼠标**点击占位项(动态文本定位 + 动态取中心,禁写死 hash,实测容器约 612×134 中心 (506,312)) |
+| 封面-打开弹窗 | CDP **真实鼠标**点击内层卡片(精确文本"选择封面"+宽度过滤取最窄者,误取 612px 外层会点空) |
 | 封面-AI封图 tab | CDP **真实鼠标**点 `[role=tab]` 文本中心 |
 | 封面-AI 生成触发 | CDP **真实鼠标**点 SPAN"根据全文智能生成封面"(非 button,非 1153,274 的 DIV) |
 | 封面-确定按钮 | CDP **真实鼠标**点击(文本"确定 (1)",模糊匹配) |
@@ -91,7 +97,7 @@ Lexical 编辑器不支持 `execCommand('delete')`,Ctrl+A+Delete 是追加而非
 6. 设置封面(cheetah 自研组件,非 antd,2026-07-10 第二次实测修正):
    核心:全部用 CDP **真实鼠标坐标点击** + 动态取中心(cdpClickEl),禁硬编码坐标、禁 in-page .click()。
    方案A(本地上传兜底):真实点击占位项 → 切"本地上传"tab → CDP DOM.setFileInputFiles → 真实点击"确定"
-   方案B(AI生成,已打通):真实点击占位项(动态文本定位:"选择封面"文字向上找 `-default` 祖先,禁写死 hash) → 隐藏提示条(含"标题功能已合并至文字模板")
+   方案B(AI生成,已打通):真实点击内层卡片(精确文本"选择封面"+宽度过滤取最窄者,**别用"向上找 -default 祖先"——会取到 612px 非可点外层**) → 隐藏提示条(含"标题功能已合并至文字模板")
      → 真实点击"AI封图"tab → 真实点击 SPAN"根据全文智能生成封面"(自动按全文生成,无需填提示词)
      → 轮询"确定 (1)"启用 → 真实点击"确定 (1)"
 7. [实测非必需] 移除 fixed 遮罩层--之前误判为根因,实际发布被拦截是因标题/封面缺失
@@ -138,9 +144,9 @@ skills/baijiahao-publisher/
 ├── SKILL.md                    ← 本文件
 ├── scripts/
 │   ├── publish.js               ← ✅ 统一发布入口(标题+正文+AI封面+发布,已验证 E2E)
-│   ├── cdp_lib.js               ← CDP WebSocket 库(connect/click/eval/insertText/setFileInputFiles)✅
-│   ├── cover_publish.js          ← ✅ 完整补封面+发布(AI生成,全动态定位,2026-07-15 验证)
-│   └── finish_publish.js         ← ✅ 封面弹窗已开时收尾(关弹窗→发布,2026-07-15 验证)
+│   ├── cdp_lib.js               ← CDP WebSocket 库(connect/click/eval/insertText/setFileInputFiles/screenshot)✅
+│   ├── cover_publish.js          ← ✅ 完整补封面+发布(AI生成,全动态定位,2026-08-21 修正)
+│   └── finish_publish.js         ← ✅ 封面弹窗已开时收尾(关弹窗→发布,2026-08-21 修正)
 ├── references/
 │   ├── workflow.md             ← 详细步骤
 │   ├── troubleshooting.md      ← 问题与方案
@@ -171,7 +177,7 @@ node scripts/finish_publish.js
 ## 封面失败时手动操作指引
 
 如果自动封面设置失败,脚本会打开浏览器在编辑器页。请在浏览器中手动:
-1. 滚动到“设置封面”区,点“选择封面”占位项(真实可点元素偏左,约左 1/3 处,勿点列表正中)
+1. 滚动到“设置封面”区,点“选择封面”占位项(真实可点的是**内层 ~198px 宽的卡片**,精确文本匹配+宽度过滤取最窄者;⚠️ 别点外层 612px 大容器,它不响应)
 2. 若出现蓝色提示条(含“标题功能已合并至文字模板”),先关闭它
 3. 切到“AI封图” tab
 4. 点“根据全文智能生成封面”(是文字按钮,非图标 DIV;点它即按全文自动生成,可不必填提示词)

@@ -1,12 +1,13 @@
 ﻿# 百家号发布 - 工作流程（2026-07-15 实测修正版）
 
-> ⚠️ v7 修正(2026-07-10 已 E2E 验证《京东外卖强势入局》发布成功):
+> ⚠️ v3 修正(2026-08-21 实战验证《身处低谷时,请重新认识你的「处境」》发布成功):
 > - 封面弹窗是 **cheetah 自研组件(非 antd)**。占位项、AI 生成触发(SPAN"根据全文智能生成封面")、"确定 (1)"按钮均用文本/角色动态定位,禁写死运行时 class hash。
-> - **所有点击用 CDP 真实鼠标坐标**(Input.dispatchMouseEvent),坐标动态取 getBoundingClientRect 中心(见 cdpClickEl),禁硬编码坐标、禁 in-page .click()/dispatchEvent。
+> - **所有点击用 CDP 真实鼠标坐标**(Input.dispatchMouseEvent),坐标动态取 getBoundingClientRect 中心(见 cdp_lib.cdpClickXY + 本地 getRect),禁硬编码坐标、禁 in-page .click()/dispatchEvent。
 > - 标题用 **CDP Input.insertText**(Ctrl+A 选中后替换,非追加)已验证可用。
 > - **标题/封面缺失才是发布被静默拦截真因**,不是遮罩层。
-> - 发布按钮:2026-07-10 17:07 发布时疑似原生 `button.click()` 有效;但 **18:54 二次实测证明 in-page `button.click()` 对 cheetah 不提交**,须用 CDP 真实鼠标坐标点击(见第七.1)。
-> 完整可用脚本:`scripts/publish.js`(全流程)、`scripts/cover_publish.js`(补封面+发布)、`scripts/finish_publish.js`(弹窗已开时收尾)。
+> - 发布按钮:须用 CDP 真实鼠标坐标点击(实测 in-page `button.click()` 对 cheetah 不提交)。
+> - ⚠️ **封面占位真实可点元素不是"选择封面"文字向上找的 -default 外层(612×134,点它不开弹窗),而是该文字所在的内层 ~198×134 卡片本身**(取 width 过滤后最窄者)。这是 2026-07-15 / 旧版 cover_publish 误判"封面弹窗未正确打开"的根因。
+> 完整可用脚本:`scripts/publish.js`(全流程,自包含纯 CDP)、`scripts/cover_publish.js`(补封面+发布,纯 CDP)、`scripts/finish_publish.js`(弹窗已开时收尾,纯 CDP)。
 
 ## v6 更新要点
 
@@ -212,10 +213,10 @@ await sleep(3000);
 // 前置：npm install ws；cdp 连接后拿到 sock
 
 // 0. 若封面弹窗未开，先真实点击占位项打开
-//    占位项 class hash 每次加载都变，禁写死；用文本"选择封面"向上找 `-default` 祖先
-//    实测容器约 612×134、中心约 (506,312),必须用元素 rect 动态取中心。
-//    占位项 class hash 每次加载都变,用文本"选择封面"向上找 -default 祖先。
-await cdpClickEl(sock, "(function(){var a=Array.from(document.querySelectorAll('*')).find(function(e){return e.textContent.trim()==='选择封面';});var n=a;while(n&&!(n.className&&String(n.className).indexOf('-default')!==-1))n=n.parentElement;return n||a;})()");
+//    ⚠️ 真实可点的是“选择封面”文字所在的内层 ~198px 卡片本身（取 width 100~400 过滤后最窄者）。
+//      千万别用“向上找 -default 祖先”——querySelectorAll('*') 外层先于内层，会停在 612px 非可点容器，导致点空。
+//      class hash 每次加载都变，一律动态取 rect，不写死。
+await cdpClickEl(sock, "(function(){var els=Array.from(document.querySelectorAll('*'));var c=els.filter(function(e){return (e.textContent||'').trim()==='选择封面'&&e.getBoundingClientRect().width>100&&e.getBoundingClientRect().width<400;});if(!c.length)return null;c.sort(function(a,b){return a.getBoundingClientRect().width-b.getBoundingClientRect().width;});return c[0];})()");
 await sleep(2500);
 
 // 1. 隐藏蓝色提示条（含“标题功能已合并至文字模板”）
@@ -226,7 +227,7 @@ await cdpEval(`(function(){var n=Array.from(document.querySelectorAll('*'));
       if(bar){bar.style.display='none';return 'HIDDEN';}}}return 'NF';})()`);
 await sleep(600);
 
-// 2. 切到 AI封图 tab（真实鼠标点击 [role=tab] 文本中心）
+// 2. 切到 AI封图 tab（真实鼠标点击 [role=tab] 文本中心，动态 rect）
 await cdpClickEl(sock, "(function(){var t=document.querySelectorAll('[role=tab]');
   for(var i=0;i<t.length;i++){if(t[i].textContent.indexOf('AI封图')!==-1)return t[i];}return null;})()");
 await sleep(2200);
@@ -324,9 +325,9 @@ for(let i=0;i<15;i++){
 | 标题输入 | `#newsTextArea [data-testid="news-title-input"] [contenteditable="true"]` | `Ctrl+A → type` 或 `CDP insertText` |
 | 正文 iframe | `#ueditor_0` | `contentDocument.body.innerHTML` 或 `window.editor.setContent()` |
 | 发布按钮 | `button[data-testid="publish-btn"]` | CDP mouseEvent |
-| 选择封面 | `document.createTreeWalker` 查找 "选择封面" 文本 | CDP mouseEvent |
-| AI封图 tab | `[role=tab]` 含 "AI封图" | JS eval `element.click()` |
-| 生成封面 | 查找含 "根据全文智能生成" 的文本节点 | CDP mouseEvent |
+| 选择封面 | 精确文本"选择封面" + width 过滤(100~400)取最窄者(内层 ~198px 卡片) | CDP mouseEvent(动态 rect) |
+| AI封图 tab | `[role=tab]` 含 "AI封图" | CDP mouseEvent |
+| 生成封面 | `span` 文本 "根据全文智能生成封面" | CDP mouseEvent |
 | 确定按钮 | `button` 含 "确定" 且 `!disabled` | CDP mouseEvent |
 | file input | `input[type="file"]` | CDP `DOM.setFileInputFiles` |
 | 遮罩层 | `position: fixed` 高 z-index | CDP eval `remove()` / `display: none` |

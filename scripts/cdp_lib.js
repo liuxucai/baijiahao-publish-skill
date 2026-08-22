@@ -1,6 +1,7 @@
 // cdp_lib.js — 可复用 CDP WebSocket 库（连接/坐标点击/eval/上传文件）
 var http = require('http');
 var ws = require('ws');
+var fs = require('fs');
 
 function cdpConnect(port, pageUrlHint) {
   return new Promise(function (rs) {
@@ -81,6 +82,19 @@ function cdpInsertText(sock, text) {
   return cdp(sock, 'Input.insertText', { text: text });
 }
 
+// 截图并保存到本地（调试用）。checkPage 失败返回 null。
+function cdpShot(sock, saveAbsPath) {
+  return cdp(sock, 'Page.captureScreenshot', { format: 'png' }).then(function (r) {
+    var d = r && r.result && r.result.data;
+    if (!d) return 'NF';
+    if (saveAbsPath) {
+      try { fs.writeFileSync(saveAbsPath, Buffer.from(d, 'base64')); return 'OK'; }
+      catch (e) { return 'ERR:' + e.message; }
+    }
+    return 'DATA';
+  });
+}
+
 // 真实鼠标点击元素：先滚入视口 → 取 getBoundingClientRect 中心 → dispatchMouseEvent
 // 关键：百家号 cheetah/FeEditorApp 组件对 in-page .click()/合成事件不响应，必须用真实鼠标坐标点击；
 //      坐标必须动态计算，严禁硬编码（分辨率/视口不同坐标会变）。
@@ -98,4 +112,4 @@ function cdpClickEl(sock, finderExpr) {
     });
 }
 
-module.exports = { cdpConnect: cdpConnect, cdp: cdp, cdpEval: cdpEval, cdpClickXY: cdpClickXY, cdpClickEl: cdpClickEl, setFileInputFiles: setFileInputFiles, cdpInsertText: cdpInsertText };
+module.exports = { cdpConnect: cdpConnect, cdp: cdp, cdpEval: cdpEval, cdpClickXY: cdpClickXY, cdpClickEl: cdpClickEl, setFileInputFiles: setFileInputFiles, cdpInsertText: cdpInsertText, cdpShot: cdpShot };
