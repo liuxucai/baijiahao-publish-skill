@@ -81,30 +81,38 @@ async function main() {
   await sl(600);
 
   // 2) 切 AI封图 tab（真实鼠标点 [role=tab] 文本中心）
+  // ⚠️ 2026-08-31 实测：当前 UI 下切到 AI封图 tab 后封面【自动生成】，
+  //   不再有“根据全文智能生成封面”按钮，也无需点击触发生成。
   log('切 AI封图 tab...');
   if (!await clickEl(sock, inCtx(COVER_MODAL, '[role=tab]', 'AI封图', false))) {
     log('AI封图 tab 未命中（可能默认即 AI 封面）');
   }
-  await sl(2200);
+  await sl(6000); // 等待自动生成完成（封面缩略图出现）
 
-  // 3) 触发 AI 生成：真实鼠标点 SPAN“根据全文智能生成封面”（非 button，非固定坐标）
-  log('触发 AI 生成...');
-  if (!await clickEl(sock, inCtx(COVER_MODAL, 'span', '根据全文智能生成封面', false))) {
-    log('未找到生成按钮，尝试其他文案...');
-    await clickEl(sock, inCtx(COVER_MODAL, 'button', '智能生成', false));
+  // 3) ⚠️ 关键修正：生成完成后“确定”按钮仍为 disabled，
+  //    必须【点选一张缩略图】后“确定(1)”才会可用。这是此前反复“封面没设置成功”的根因。
+  log('点选第一张缩略图以启用确定...');
+  if (!await clickEl(sock, "(function(){var c=(" + COVER_MODAL + ");var imgs=Array.from(c.querySelectorAll('img')).filter(function(i){return i.getBoundingClientRect().width>40;});return imgs[0]||null;})()")) {
+    log('未找到缩略图');
   }
-  log('已触发，轮询确定按钮...');
-
-  let ok = false;
-  for (let i = 0; i < 30; i++) {
-    await sl(4000);
-    const d = await cdpLib.cdpEval(sock, "(function(){var c=(" + COVER_MODAL + ");if(!c)return 'NOMODAL';var b=Array.from(c.querySelectorAll('button'));for(var i=0;i<b.length;i++){if(b[i].textContent.indexOf('确定')!==-1)return b[i].disabled?'DISABLED':'ENABLED';}return 'NF';})()");
-    if (i % 3 === 0 || d === 'ENABLED') log('  [' + ((i + 1) * 4) + 's] 确定: ' + d);
-    if (d === 'ENABLED') { ok = true; break; }
+  await sl(2000);
+  let dis = await cdpLib.cdpEval(sock, "(function(){var c=(" + COVER_MODAL + ");var b=Array.from(c.querySelectorAll('button')).find(function(x){return x.textContent.indexOf('确定')!==-1;});return b?b.disabled:null;})()");
+  log('选图后 确定 disabled=' + dis);
+  // 若仍 disabled，依次点后续缩略图
+  if (dis) {
+    for (let k = 1; k < 6; k++) {
+      await clickEl(sock, "(function(){var c=(" + COVER_MODAL + ");var imgs=Array.from(c.querySelectorAll('img')).filter(function(i){return i.getBoundingClientRect().width>40;});return imgs[" + k + "]||null;})()");
+      await sl(2000);
+      const d2 = await cdpLib.cdpEval(sock, "(function(){var c=(" + COVER_MODAL + ");var b=Array.from(c.querySelectorAll('button')).find(function(x){return x.textContent.indexOf('确定')!==-1;});return b?b.disabled:null;})()");
+      log('  第' + k + '张缩略图后 disabled=' + d2);
+      if (!d2) break;
+    }
   }
-  if (!ok) { log('AI 生成未就绪，中止'); return; }
+  const ready = await cdpLib.cdpEval(sock, "(function(){var c=(" + COVER_MODAL + ");var b=Array.from(c.querySelectorAll('button')).find(function(x){return x.textContent.indexOf('确定')!==-1;});return b?(b.disabled?'DISABLED':'ENABLED'):'NF';})()");
+  if (ready !== 'ENABLED') { log('确定按钮未启用，中止'); return; }
+  log('已选图，确定可用');
 
-  // 4) 点确定（真实鼠标，文本含“确定”模糊匹配）
+  // 4) 点确定（真实鼠标，文本含“确定”模糊匹配；按钮文本为“确定”或“确定 (1)”）
   log('点确定...');
   await clickEl(sock, inCtx(COVER_MODAL, 'button', '确定', false));
   await sl(3000);
