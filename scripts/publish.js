@@ -27,6 +27,28 @@ const CONFIG = {
 };
 // ====================================================================
 
+// ===================== 标题校验（填入前先检查，避免被静默拦截白跑全流程） =====================
+// 平台已知规则：占位符原文「请输入标题(2-64字)」。标题为空/超长会被“标题必填/最多64字”校验静默拦截，
+// 表现像按钮失灵（v7 实测）。这里在 fillTitle 之前先做静态校验，不合规直接中止并报原因。
+const TITLE_MIN = 2;   // 最少字数（含）
+const TITLE_MAX = 64;  // 最多字数（含）
+function validateTitle(title) {
+  const errors = [];
+  if (title == null || typeof title !== 'string') {
+    errors.push('标题未定义（CONFIG.title 缺失）');
+    return { ok: false, errors, len: 0 };
+  }
+  const t = title.trim();
+  if (t.length === 0) errors.push('标题为空');
+  const n = [...t].length;            // 按字符（Unicode 码点）计“字”，兼容中文/emoji
+  if (n < TITLE_MIN) errors.push('标题不足 ' + TITLE_MIN + ' 字（当前 ' + n + ' 字）');
+  if (n > TITLE_MAX) errors.push('标题超过 ' + TITLE_MAX + ' 字（当前 ' + n + ' 字）——服务端会拦截并累积草稿乱码');
+  if (title !== t) errors.push('标题首尾含空白');
+  if (/\s{2,}/.test(title)) errors.push('标题含连续空白');
+  return { ok: errors.length === 0, errors, len: n };
+}
+// ====================================================================
+
 function log(m) { console.log('[' + new Date().toLocaleTimeString() + '] ' + m); }
 function sl(ms) { return new Promise(r => setTimeout(r, ms)); }
 function scr(sock, n) { return cdpLib.cdpShot(sock, SAVE + 'pub_' + n + '.png').catch(function () {}); }
@@ -56,8 +78,16 @@ async function closeGuide(sock) {
   if (done === 'CLOSED') { log('已关闭引导弹窗'); await sl(800); }
 }
 
-// 填标题（CDP 坐标点标题框 → Ctrl+A → Input.insertText）
-async function fillTitle(sock) {
+// 读取标题框“真实内容”：忽略 Lexical 占位符节点（class 含 placeholder、child:0），只取非占位符文本。
+// ⚠️ 空框时 input-box 的 innerText 会显示占位符「请输入标题（2-64字）」，那不是真实内容（2026-09-08 实测）。
+async function getRealTitle(sock) {
+  const r = await cdpLib.cdpEval(sock, "(function(){var e=document.querySelector('.input-box')||document.querySelector('[data-testid=news-title-input]')||document.querySelector('.title-input__inner');if(!e)return 'NO_EL';var real='';for(var i=0;i<e.childNodes.length;i++){var n=e.childNodes[i];if(n.nodeType===3){real+=n.textContent;}else if(n.className&&n.className.indexOf('placeholder')===-1){real+=(n.innerText||'');}}return real.trim();})()");
+  return r === 'NO_EL' ? null : r;
+}
+
+// 填标题（CDP 坐标点标题框 → Ctrl+A → Input.insertText）。text 默认 CONFIG.title。
+async function fillTitle(sock, text) {
+  const title = (text != null) ? text : CONFIG.title;
   await cdpLib.cdpEval(sock, 'window.scrollTo(0,0)'); await sl(500);
   const tpos = await cdpLib.cdpEval(sock, "(function(){var e=document.querySelector('[data-testid=news-title-input]')||document.querySelector('.title-input__inner')||document.querySelector('.input-box');if(!e)return 'NO_EL';var r=e.getBoundingClientRect();return JSON.stringify({x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)});})()");
   if (tpos === 'NO_EL') { log('❌ 找不到标题输入框'); return false; }
@@ -68,11 +98,86 @@ async function fillTitle(sock) {
   await cdpLib.cdp(sock, 'Input.dispatchKeyEvent', { type: 'rawKeyUp', key: 'a', code: 'KeyA', modifiers: 2 });
   await cdpLib.cdp(sock, 'Input.dispatchKeyEvent', { type: 'rawKeyUp', key: 'Control', code: 'ControlLeft', modifiers: 0 });
   await sl(300);
-  await cdpLib.cdpInsertText(sock, CONFIG.title);
+  await cdpLib.cdpInsertText(sock, title);
   await sl(800);
-  const tnow = await cdpLib.cdpEval(sock, "(function(){var e=document.querySelector('[data-testid=news-title-input]')||document.querySelector('.title-input__inner')||document.querySelector('.input-box');return e?(e.innerText||'').substring(0,30):'NO_EL';})()");
-  log('标题已填: ' + tnow + '（' + CONFIG.title.length + '字）');
+  log('标题已填（预期 ' + [...title].length + ' 字）');
   return true;
+}
+
+// 清空标题框（恢复用）：真实鼠标点框 → Ctrl+A 全选 → Input.insertText("") 替换选区为空白
+// ⚠️ 不要用 Ctrl+A + Delete/Backspace：Lexical 忽略删除并追加（troubleshooting T1 实测）。
+async function clearTitle(sock) {
+  await cdpLib.cdpEval(sock, 'window.scrollTo(0,0)'); await sl(500);
+  const tpos = await cdpLib.cdpEval(sock, "(function(){var e=document.querySelector('[data-testid=news-title-input]')||document.querySelector('.title-input__inner')||document.querySelector('.input-box');if(!e)return 'NO_EL';var r=e.getBoundingClientRect();return JSON.stringify({x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)});})()");
+  if (tpos === 'NO_EL') { log('❌ 找不到标题输入框，无法清空'); return false; }
+  const tp = JSON.parse(tpos);
+  await cdpLib.cdpClickXY(sock, tp.x, tp.y); await sl(400);
+  await cdpLib.cdp(sock, 'Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Control', code: 'ControlLeft', modifiers: 2 });
+  await cdpLib.cdp(sock, 'Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'a', code: 'KeyA', modifiers: 2 });
+  await cdpLib.cdp(sock, 'Input.dispatchKeyEvent', { type: 'rawKeyUp', key: 'a', code: 'KeyA', modifiers: 2 });
+  await cdpLib.cdp(sock, 'Input.dispatchKeyEvent', { type: 'rawKeyUp', key: 'Control', code: 'ControlLeft', modifiers: 0 });
+  await sl(300);
+  await cdpLib.cdpInsertText(sock, '');
+  await sl(500);
+  const real = await getRealTitle(sock);
+  log('标题已清空: ' + (real === '' ? '（空）' : '「' + real + '」'));
+  return true;
+}
+
+// 填后复核：读出框内真实内容，既验证“符合要求”也验证“与预期一致”（防编辑器静默截断/串字）
+async function postCheckTitle(sock, expected) {
+  const real = await getRealTitle(sock);
+  if (real == null) return { ok: false, real: null, v: { ok: false, errors: ['读不到标题框'] } };
+  const v = validateTitle(real);
+  const match = real === expected;
+  return { ok: v.ok && match, real: real, v: v, match: match };
+}
+
+// 重构标题：针对已知可自动修复的不合规做确定性修复；无法修复（如过短/与预期不符）返回 null 交人工。
+function reconstructTitle(title, post) {
+  if (title == null) return null;
+  const norm = title.trim().replace(/\s{2,}/g, ' ');   // 修首尾/连续空白
+  if (norm !== title) { log('↳ 重构：规范化空白 → 「' + norm + '」'); return norm; }
+  const chars = [...norm];
+  if (chars.length > TITLE_MAX) {                       // 超长：截断到上限
+    const cut = chars.slice(0, TITLE_MAX).join('');
+    log('↳ 重构：截断至 ' + TITLE_MAX + ' 字 → 「' + cut + '」');
+    return cut;
+  }
+  if (chars.length < TITLE_MIN) {                       // 过短：无法自动补齐，交人工
+    log('⚠️ 标题过短（' + chars.length + ' 字），无法自动重构，请人工提供合规标题');
+    return null;
+  }
+  if (post && !post.match) {                            // 长度合规但与预期不符，无更多自动策略
+    log('⚠️ 填后内容与预期不一致且无法自动修复，请人工确认');
+    return null;
+  }
+  return null;
+}
+
+// 标题闭环（2026-09-08 优化）：填前校验 → 填入 → 填后复核 → 不合规则清空+重构+再填（上限 MAX_TITLE_RETRIES 轮）
+const MAX_TITLE_RETRIES = 3;
+async function ensureTitle(sock, title) {
+  let current = title;
+  for (let attempt = 1; attempt <= MAX_TITLE_RETRIES; attempt++) {
+    const pre = validateTitle(current);
+    if (!pre.ok) {
+      log('[' + attempt + '] 填前校验不通过：' + pre.errors.join('；'));
+      const fixed = reconstructTitle(current);
+      if (!fixed) { log('❌ 标题无法自动修复，中止'); return false; }
+      current = fixed; continue;
+    }
+    await fillTitle(sock, current);
+    const post = await postCheckTitle(sock, current);
+    if (post.ok) { log('[' + attempt + '] ✅ 填后复核通过：' + post.real); return true; }
+    log('[' + attempt + '] 填后复核不通过：' + (post.match ? post.v.errors.join('；') : '实际「' + post.real + '」≠预期「' + current + '」'));
+    await clearTitle(sock);
+    const fixed = reconstructTitle(current, post);
+    if (!fixed) { log('❌ 标题无法自动修复，中止'); return false; }
+    current = fixed;
+  }
+  log('❌ 超过 ' + MAX_TITLE_RETRIES + ' 轮仍未合规，中止');
+  return false;
 }
 
 // 填正文（UEditor setContent，经 CDP eval）
@@ -170,7 +275,8 @@ async function main() {
     if (v === 'READY') break; await sl(1500);
   }
   await closeGuide(sock);
-  await fillTitle(sock);
+  const titleOk = await ensureTitle(sock, CONFIG.title);
+  if (!titleOk) { await scr(sock, 'title_fail'); sock.close(); return; }
   await fillBody(sock);
   if (CONFIG.coverMode !== 'skip') {
     if (CONFIG.coverMode === 'ai') await setCoverAI(sock);
@@ -182,4 +288,8 @@ async function main() {
   sock.close();
 }
 
-main().catch(e => log('FATAL: ' + e.message));
+if (require.main === module) {
+  main().catch(e => log('FATAL: ' + e.message));
+}
+
+module.exports = { validateTitle, reconstructTitle, ensureTitle, getRealTitle, clearTitle, fillTitle, CONFIG };

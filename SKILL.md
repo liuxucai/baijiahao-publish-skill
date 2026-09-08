@@ -71,6 +71,21 @@ Lexical 编辑器不支持 `execCommand('delete')`,Ctrl+A+Delete 是追加而非
 
 **唯一可靠**:`Ctrl+A → type`(CDP Input.insertText 天然替换选区,非追加)。如果标题累积过长(服务端草稿恢复),刷新页面也不行,需清除 `localStorage` + `sessionStorage` 后重新打开。
 
+**2026-09-08 实测**：填→清→填全流程通过（`scripts/test_title_clear.js`）。清空用 `clearTitle()`（点框→Ctrl+A→`Input.insertText("")`）。⚠️ 清空后 `.input-box` 的 `innerText` 会显示 Lexical 占位符「请输入标题（2-64字）」——这是空框的占位提示**不是残留内容**；判定是否已空应读 `.input-box` 下非 `[class*=placeholder]` 节点的文本（占位符节点 child:0）。
+
+### 🔁 标题闭环流程（2026-09-08 优化，发布主链路已接）
+
+把「填前校验→填入→填后复核→不合规则清空+重构+再填」封成 `ensureTitle(sock,title)`（位于 publish.js），`main()` 在填正文前调用：
+
+1. **填前校验** `validateTitle(title)`：非空、2–64 字（按 Unicode 字符计）、首尾无空白、无连续空白。不合规→进入重构。
+2. **填入**：CDP 点框 + Ctrl+A + `Input.insertText(title)`。
+3. **填后复核** `postCheckTitle(sock,title)`：真实读回 `.input-box` 非占位符文本，既校验"符合要求"也校验"与预期一致"（防编辑器静默截断/串字）。
+4. **不合规则**：`clearTitle()` 清空 → `reconstructTitle()` 重构 → 再填入，最多 `MAX_TITLE_RETRIES=3` 轮。
+   - 自动可修：`首尾/连续空白`→规范化；`超长(>64)`→截断到 64 字。
+   - 无法自动修：`空`/`过短(<2字)`/`长度合规但与预期不符`→返回 NULL，`ensureTitle` 中止并提示人工，不盲目发布。
+
+**实测（2026-09-08，`_live_title_loop.js`）**：合规标题 1 轮通过；超长(162字)自动截断到 64 字后通过；首尾/连续空格规范化后通过。全程用真实鼠标坐标 + `Input.insertText`，清空用空串替换选区。
+
 ### 🟢 CDP vs xb 选择策略(2026-07-10 第二次实测修正)
 
 | 场景 | 推荐工具 |
