@@ -30,6 +30,22 @@ description: 百家号(baijiahao.baidu.com)文章自动发布流程。通过 iso
 
 **CDP `Input.dispatchMouseEvent` 真实鼠标点击**:对 cheetah 组件(标题框/封面占位/发布按钮/确定按钮)均有效,前提坐标是元素真实中心(动态 `getBoundingClientRect`,勿硬编码)。in-page `.click()` / `dispatchEvent` 合成事件对 cheetah 组件基本无效。
 
+### ⛔ 已证伪 / 禁用的做法（勿再用，按 2026-09-10 实测结论）
+
+以下方法**实测无效或已被用户明令禁止**，不要再写回脚本或文档：
+
+1. **用「AI封图」定位 tab**：新 UI tab 文本是「AI封面」，旧 `indexOf('AI封图')` 点不到 tab，是封面流程错乱的主因。→ 用「AI封面」。
+2. **切 AI封面 tab 后等"根据全文智能生成封面"按钮**：该 SPAN 已不存在，切 tab 即自动生成（或点 `id=ai-cover-tab-v2-step-1` 生成）。
+3. **点父 group / 缩略图外层容器来选中封面**：只会触发 `cheetah-popover` 浮层，无法选中，「确定」恒 disabled。→ 必须**真实点击 `img` 元素本身**（父 group 加 `-selected` 类才生效）。
+4. **缩略图选择器用 `width>40` 单过滤**：弹窗内还有 **336×252 大预览图**会排在 `imgs[0]`，点中的是大预览图、选不中缩略图。→ 必须 `width>40 && width<200` 取 70×52 候选。
+5. **`clickByText('确定')` 关弹窗**：会命中弹窗外编辑页里的同名「确定」按钮，弹窗未关、发布被遮挡、URL 不跳。→ 用**精确坐标 `cdpClickXY`** 点「确定 (1)」并轮询 `[role=dialog]` 消失。
+6. **点「热门模板」/「做同款」**：AI 生成后**直接选第一张生成图即可**；「做同款」是 `pointer-events:none` 提示（仅 hover 显示），点不动也无需点。
+7. **本地上传兜底（setCoverUpload）**：⛔ 用户明令禁止。AI 封面失败即**主动中止发布**，绝不带病发布、绝不回退本地上传。
+8. **硬编码坐标点击**（如 (612,561)、(1153,274)）或 in-page `.click()`：cheetah 组件不提交、坐标随视口漂移。→ 全部用 `getBoundingClientRect` 动态取中心 + CDP 真实鼠标。
+9. **向上找 `-default` 祖先定位封面占位**：hash 每次加载都变且会取到 612px 外层非可点容器。→ 用「精确文本 + 宽度过滤取最窄」。
+
+---
+
 ### 🟢 封面方案:AI 生成已打通(cheetah 自研组件,非 antd) - 2026-07-10 第二次实测修正
 
 **关键发现**:封面弹窗是百家号**自研 cheetah/FeEditorApp 组件**,所有 `.ant-modal` 选择器都失效。
@@ -54,16 +70,16 @@ return c[0]; // 最内层卡片
 |------|------|------|
 | 开弹窗 | **真实鼠标点击**内层卡片 | 精确文本`选择封面`+宽度过滤(100~400)取最窄者 |
 | 隐藏蓝色提示条 | CDP eval `display:none` | 含"标题功能已合并至文字模板"的条 |
-| 切 AI封图 tab | **真实鼠标点击** `[role=tab]` 文本中心 | `getBoundingClientRect` 取中心 |
-| AI 生成 | **切到 AI封图 tab 后自动生成**（2026-08-31 修正：不再有“根据全文智能生成封面”按钮，无需点击触发） |
-| **选封面缩略图(关键)** | **真实鼠标点击**生成后的一张缩略图 `img`(width>40) | ⚠️ 2026-08-31 修正：生成完成后“确定”仍 disabled，**必须点选一张缩略图后“确定 (1)”才启用**——此前反复“封面没设置成功”的根因 |
-| 点确定 | **真实鼠标点击** | button 文本含"确定"（文本为“确定”或“确定 (1)”） |
+| 切 AI封面 tab | **真实鼠标点击** `[role=tab]` 文本中心 | `getBoundingClientRect` 取中心（⚠️ 新 UI tab 文本为「AI封面」，非旧「AI封图」） |
+| AI 生成 | **真实鼠标点击** `id=ai-cover-tab-v2-step-1`（role=button，即「来试试AI生成封面」/从正文总结生成入口） | 点后约 3s 自动生成 14~17 张缩略图；失败则重试点击该按钮 |
+| **选封面缩略图(关键)** | **真实鼠标点击**生成后的一张缩略图 `img`(width>40)——点 img 本身，不是其父 group | 点中后 group 加 `-selected` 类，「确定 (1)」变为 enabled；⚠️ 不要点 group（会触发 cheetah-popover 浮层，无法选中） |
+| 点确定(关弹窗) | **真实鼠标坐标点击**「确定 (1)」按钮中心 | ⚠️ `clickByText` 曾命中外层同名按钮导致弹窗未关；改用精确坐标 `cdpClickXY` 点击，并轮询弹窗 `[role=dialog]` 消失(最多 ~10s) |
 
 **cdp_lib 已提供 `cdpClickEl(sock, finderExpr)`**:先 `scrollIntoView({block:'center})` → 取 `getBoundingClientRect` 中心 → `cdpClickXY` 真实点击。封面各步统一用此函数。
 
 **注意**:"确定"按钮文本是"确定"或"确定 (1)",检测时要 `indexOf('确定')` 而非精确匹配。
 
-本地上传方案(setFileInputFiles)仍可用作兜底,但需先切到"本地上传"tab 后 file input 才存在。
+⛔ **本地上传已禁用**（用户明令禁止兜底）。AI 封面失败即主动中止发布，绝不回退本地上传。
 
 ### 🟡 标题清空唯一可靠方案
 
@@ -93,8 +109,8 @@ Lexical 编辑器不支持 `execCommand('delete')`,Ctrl+A+Delete 是追加而非
 | 标题填写 | CDP 坐标点标题框 + Ctrl+A(dispatchKeyEvent)+ Input.insertText(已验证可用,非追加) |
 | 正文设置(UEditor) | CDP eval `editor.setContent(html)` |
 | 封面-打开弹窗 | CDP **真实鼠标**点击内层卡片(精确文本"选择封面"+宽度过滤取最窄者,误取 612px 外层会点空) |
-| 封面-AI封图 tab | CDP **真实鼠标**点 `[role=tab]` 文本中心 |
-| 封面-AI 生成触发 | 切到 AI封图 tab 即自动生成(2026-08-31 修正：旧版“根据全文智能生成封面”SPAN 已移除) |
+| 封面-AI封面 tab | CDP **真实鼠标**点 `[role=tab]` 文本中心(新 UI 文本为「AI封面」,非旧「AI封图」) |
+| 封面-AI 生成触发 | 真实点击 `id=ai-cover-tab-v2-step-1` 生成入口,约 3s 自动生成 14~17 张(2026-09-10 修正) |
 | **封面-选缩略图** | **真实鼠标点击**一张 `img` 缩略图(2026-08-31 修正：不设此步则“确定”恒 disabled，封面无法生效) |
 | 封面-确定按钮 | CDP **真实鼠标**点击(文本"确定 (1)",模糊匹配) |
 | 封面-文件上传 | CDP DOM.setFileInputFiles(兜底方案) |
@@ -112,10 +128,11 @@ Lexical 编辑器不支持 `execCommand('delete')`,Ctrl+A+Delete 是追加而非
 5. 填正文:CDP eval `editor.setContent(html)`(UEditor)
 6. 设置封面(cheetah 自研组件,非 antd,2026-07-10 第二次实测修正):
    核心:全部用 CDP **真实鼠标坐标点击** + 动态取中心(cdpClickEl),禁硬编码坐标、禁 in-page .click()。
-   方案A(本地上传兜底):真实点击占位项 → 切"本地上传"tab → CDP DOM.setFileInputFiles → 真实点击"确定"
+   ⛔ 方案A(本地上传兜底)已禁用:用户禁止本地上传,AI 封面失败即中止发布
    方案B(AI生成,已打通):真实点击内层卡片(精确文本"选择封面"+宽度过滤取最窄者,**别用"向上找 -default 祖先"——会取到 612px 非可点外层**) → 隐藏提示条(含"标题功能已合并至文字模板")
-     → 真实点击"AI封图"tab → **切到 AI封图 tab 后封面自动生成**(2026-08-31 修正：旧版"根据全文智能生成封面"SPAN 已不存在,无需点击触发)
-     → **点选一张生成的缩略图**(2026-08-31 修正：关键！不点选则"确定"恒 disabled,封面无法生效) → 真实点击"确定 (1)"
+     → 真实点击"AI封面"tab(新 UI 文本为「AI封面」,非旧「AI封图") → **真实点击 `id=ai-cover-tab-v2-step-1`(AI 生成封面入口)**,约 3s 自动生成 14~17 张缩略图
+     → **直接选中 AI 生成出的第一张缩略图 `img`(width>40) 本身**即可(点 img 才加 `-selected` 选中态并启用「确定 (1)」;点父 group 只会弹 popover 无法选中)。⚠️ **无需选「热门模板」区(step-2/「做同款」)——那是另一条路，选生成图就够，切勿去点热门模板的「做同款」(`pointer-events:none`,本来也点不动)**
+     → **用精确坐标真实点击「确定 (1)」并轮询弹窗关闭**(2026-09-10 修正：旧 `clickByText('确定')` 曾命中弹窗外同名按钮导致弹窗未关、发布被遮挡拦截)
 7. [实测非必需] 移除 fixed 遮罩层--之前误判为根因,实际发布被拦截是因标题/封面缺失
 8. 点击"发布":CDP **真实鼠标坐标点击**(取按钮 getBoundingClientRect 中心)。⚠️ in-page `button.click()` 对 cheetah 不提交(18:54 实测),必须用真实鼠标事件
 9. 轮询 URL 跳转 / body 含"审核"即为成功;若有确认弹窗同样用真实鼠标点击("确认发布"/"确定")
@@ -161,8 +178,9 @@ skills/baijiahao-publisher/
 ├── scripts/
 │   ├── publish.js               ← ✅ 统一发布入口(标题+正文+AI封面+发布,已验证 E2E)
 │   ├── cdp_lib.js               ← CDP WebSocket 库(connect/click/eval/insertText/setFileInputFiles/screenshot)✅
-│   ├── cover_publish.js          ← ✅ 完整补封面+发布(AI生成,全动态定位,2026-08-21 修正)
-│   └── finish_publish.js         ← ✅ 封面弹窗已开时收尾(关弹窗→发布,2026-08-21 修正)
+│   ├── check_title.js           ← 标题静态校验(validateTitle,纯规则不连浏览器)
+│   ├── clear_title.js           ← 清空标题框(Ctrl+A+Input.insertText(""))
+│   └── test_title_clear.js      ← 标题填→清→填回归测试
 ├── references/
 │   ├── workflow.md             ← 详细步骤
 │   ├── troubleshooting.md      ← 问题与方案
@@ -181,11 +199,10 @@ npm install ws   # 若 node_modules/ws 已存在可跳过
 # 2. 完整发布(填标题+正文+AI封面+发布):编辑 publish.js 的 TITLE/正文后再跑
 node scripts/publish.js
 
-# 3. 仅补封面+发布(草稿已填好标题正文,只差封面):
-node scripts/cover_publish.js
+# 3. 仅补封面+发布 / 弹窗已开收尾：均已并入统一入口 scripts/publish.js
 
-# 4. 封面选择弹窗已开着时的收尾(关弹窗→发布):
-node scripts/finish_publish.js
+#    （旧 cover_publish.js / finish_publish.js / final_publish.js 已删除，因其残留旧「AI封图」UI、
+#     336 大图 width>40 单过滤、clickByText 关弹窗等失效逻辑，已由 publish.js 取代）
 ```
 
 > 完整发布链路已打通。CDP 端口 9222 需由 **isolated-browser 拉起的隔离 Chrome** 提供(运行 `node skills/isolated-browser/scripts/launch.js`);百家号需已登录。所有点击用 CDP 真实鼠标坐标(动态 rect),不依赖运行时 class hash。
@@ -195,9 +212,9 @@ node scripts/finish_publish.js
 如果自动封面设置失败,脚本会打开浏览器在编辑器页。请在浏览器中手动:
 1. 滚动到“设置封面”区,点“选择封面”占位项(真实可点的是**内层 ~198px 宽的卡片**,精确文本匹配+宽度过滤取最窄者;⚠️ 别点外层 612px 大容器,它不响应)
 2. 若出现蓝色提示条(含“标题功能已合并至文字模板”),先关闭它
-3. 切到“AI封图” tab（切过去后封面会**自动生成**，不再有“根据全文智能生成封面”按钮）
-4. ⚠️ 等几秒生成完成后，**点选其中一张缩略图**——这一步必做，否则“确定”按钮一直是灰色不可点
-5. 点“确定 (1)”按钮（文字带空格和数字）
+3. 切到 AI封面 tab(新 UI 文本「AI封面」),**真实点击 `id=ai-cover-tab-v2-step-1` 生成封面**(约 3s 出 14~17 张,失败重试)**自动生成**，不再有“根据全文智能生成封面”按钮)。⚠️ 生成后直接选第一张 AI 图即可，无需去选「热门模板」区
+4. ⚠️ **真实点击第一张缩略图 `img`(width>40) 本身**→ group 加 `-selected`、确定 (1) 启用(勿点父 group,会弹 popover)——这一步必做，否则“确定”按钮一直是灰色不可点
+5. **用精确坐标真实点击「确定 (1)」并轮询弹窗关闭**(旧 clickByText 会命中弹窗外同名按钮导致弹窗未关)
 6. 确认标题已填,点“发布”按钮(真实点击即可提交)
 
 ## 脚本 vs 手动执行参考
@@ -206,5 +223,5 @@ node scripts/finish_publish.js
 |------|------|
 | 标题已填好 → 无需操作 | 可直接点发布 |
 | 正文已填好 → 无需操作 | 可直接点发布 |
-| 封面未设置 → 手动设 | "选择封面"→"AI封图"→"生成"→确定 |
+| 封面未设置 → 手动设 | "选择封面"→"AI封面"tab→点 step-1 生成→点 img[0] 选中→坐标点「确定 (1)」关弹窗 |
 | 遮罩层挡住发布 → 按 F5 刷新 | 内容可能被保留(草稿) |

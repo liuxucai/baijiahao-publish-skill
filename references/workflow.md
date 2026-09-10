@@ -6,8 +6,8 @@
 > - 标题用 **CDP Input.insertText**(Ctrl+A 选中后替换,非追加)已验证可用。
 > - **标题/封面缺失才是发布被静默拦截真因**,不是遮罩层。
 > - 发布按钮:须用 CDP 真实鼠标坐标点击(实测 in-page `button.click()` 对 cheetah 不提交)。
-> - ⚠️ **封面占位真实可点元素不是"选择封面"文字向上找的 -default 外层(612×134,点它不开弹窗),而是该文字所在的内层 ~198×134 卡片本身**(取 width 过滤后最窄者)。这是 2026-07-15 / 旧版 cover_publish 误判"封面弹窗未正确打开"的根因。
-> 完整可用脚本:`scripts/publish.js`(全流程,自包含纯 CDP)、`scripts/cover_publish.js`(补封面+发布,纯 CDP)、`scripts/finish_publish.js`(弹窗已开时收尾,纯 CDP)。
+> - ⚠️ **封面占位真实可点元素不是"选择封面"文字向上找的 -default 外层(612×134,点它不开弹窗),而是该文字所在的内层 ~198×134 卡片本身**(取 width 过滤后最窄者)。这是旧版误判"封面弹窗未正确打开"的根因。
+> 完整可用脚本:`scripts/publish.js`(全流程,自包含纯 CDP,已验证 E2E;旧 cover_publish.js / finish_publish.js / final_publish.js 已删除)。
 
 ## v6 更新要点
 
@@ -50,10 +50,10 @@
 ### 0.3 关于 AI 封面的真相
 
 **重要发现（2026-07-07 19:46 截图验证）**：
-- "AI封图" tab 切换不生效 → `cdp dispatchMouseEvent` 和 `xb click` 均无效
+- "AI封面" tab 切换不生效 → 旧 `indexOf('AI封图')` 点不到;改用「AI封面」文本
 - 只能用 JS `element.click()` 通过 CDP eval 强制调用
 - "确定"按钮在封面未生成时为 disabled，AI 生成后可能仍 disabled
-- CDP 文件上传（本地上传）是唯一 100% 可靠的方式
+- CDP 文件上传（本地上传）⛔ 已禁用(用户禁止);AI 封面失败即中止发布,勿回退本地上传
 
 ---
 
@@ -172,35 +172,14 @@ await cdpEval(`(function(){
 
 ## 六、设置封面
 
-### 6.1 方案 A：本地上传（推荐，最可靠）
+### 6.1 ⛔ 方案 A：本地上传（已禁用，用户禁止）
+
+> **2026-09-10 起已禁用**：用户明令禁止本地上传兜底。AI 封面失败即**主动中止发布**，绝不回退本地上传、绝不带病发布。
+> 以下旧脚本片段仅供参考历史实现（setCoverUpload 已从 publish.js 删除，请勿复用）：
 
 ```javascript
-// 前置：npm install ws
-// 前置：生成一张 800x533 JPG 封面图
-
-// 1. 滚动到封面区域
-await cdpEval('window.scrollTo(0, 700)');
-await sleep(500);
-
-// 2. 点击"选择封面"打开弹窗
-await cdpClickEl(sock, "(function(){var wa=document.createTreeWalker(document.body,4,null,false);var n;while(n=wa.nextNode()){if(n.textContent.trim()==='选择封面')return n.parentElement;}return null;})()");
-await sleep(3000);
-
-// 3. 找 file input 并上传
-const doc = await cdp('DOM.getDocument', {});
-const inputNode = await cdp('DOM.querySelector', {
-  nodeId: doc.result.root.nodeId,
-  selector: 'input[type="file"]'
-});
-await cdp('DOM.setFileInputFiles', {
-  files: ['C:/path/to/cover.jpg'],
-  nodeId: inputNode.result.nodeId
-});
-await sleep(3000);
-
-// 4. 确认按钮（上传后自动激活 Enabled）
-await cdpClickEl(sock, "(function(){var B=document.querySelectorAll('button');for(var i=0;i<B.length;i++){var b=B[i];if(b.textContent.indexOf('确定')!==-1&&!b.disabled&&b.offsetWidth>0)return b;}return null;})()");
-await sleep(3000);
+// 旧实现(已禁用,勿用):本地上传走 DOM.setFileInputFiles,需先切"本地上传" tab 后 file input 才存在
+// 用户禁止,publish.js 不再提供此路径
 ```
 
 ### 6.2 方案 B：AI 封面（2026-07-15 实测跑通）
@@ -227,40 +206,48 @@ await cdpEval(`(function(){var n=Array.from(document.querySelectorAll('*'));
       if(bar){bar.style.display='none';return 'HIDDEN';}}}return 'NF';})()`);
 await sleep(600);
 
-// 2. 切到 AI封图 tab（真实鼠标点击 [role=tab] 文本中心，动态 rect）
+// 2. 切到 AI封面 tab（真实鼠标点击 [role=tab] 文本中心，动态 rect）
 await cdpClickEl(sock, "(function(){var t=document.querySelectorAll('[role=tab]');
-  for(var i=0;i<t.length;i++){if(t[i].textContent.indexOf('AI封图')!==-1)return t[i];}return null;})()");
+  for(var i=0;i<t.length;i++){if(t[i].textContent.indexOf('AI封面')!==-1)return t[i];}return null;})()");
 await sleep(2200);
 
-// 3. 触发 AI 生成：真实鼠标点击 SPAN“根据全文智能生成封面”
-//    ⚠️ 它不是 button，是 SPAN.FeEditorApp-_6853aa778d53acdc-theme，
-//       点它即按全文自动生成，无需先填提示词。
-await cdpClickEl(sock, "(function(){var s=Array.from(document.querySelectorAll('span'));
-  for(var i=0;i<s.length;i++){if(s[i].textContent.trim()==='根据全文智能生成封面'&&s[i].offsetWidth>0)return s[i];}return null;})()");
-await sleep(2000);
+// 3. 触发 AI 生成：真实鼠标点击 id=ai-cover-tab-v2-step-1（role=button，AI 生成封面入口）
+//    ⚠️ 新 UI 已无“根据全文智能生成封面”SPAN；切到 AI封面 tab 后点 step-1 即按全文自动生成 14~17 张缩略图。
+//    （无需走 step-2 热门模板，也无需点“做同款”——它是 pointer-events:none 提示，点不动）
+await cdpClickEl(sock, "(function(){var e=document.getElementById('ai-cover-tab-v2-step-1');return e||null;})()");
+await sleep(3000);
 
-// 4. 轮询“确定”按钮（文本为“确定 (1)”带空格和数字，须模糊匹配 indexOf('确定')）
+// 4. 点选第一张缩略图（70×52 的 img 本身，width 41~200；勿点 336×252 大预览图，它会被 width>40 排在 imgs[0] 但选不中）
+//    ⚠️ 必须真实点击 img 元素本身；点父 group 只弹 cheetah-popover、无法选中，确定恒 disabled。
+//    选中后父 group 加 -selected 类、"确定 (1)" 才 enabled。
+const THUMB = "(function(){var c=(" + COVER_MODAL + ");if(!c)return null;var imgs=Array.from(c.querySelectorAll('img')).filter(function(img){var w=img.getBoundingClientRect().width;return w>40&&w<200;});return imgs[0]||null;})()";
 let ok=false;
-for(let i=0;i<30;i++){
-  await sleep(5000);
-  const d = await cdpEval(`(function(){var b=document.querySelectorAll('button');
-    for(var i=0;i<b.length;i++){if(b[i].textContent.trim().indexOf('确定')!==-1&&b[i].offsetWidth>0)
-      return b[i].disabled?'DISABLED':'ENABLED';}return 'NF';})()`);
-  if(d==='ENABLED'){ ok=true; break; }
+for(let pick=0;pick<3&&!ok;pick++){
+  await cdpClickEl(sock, THUMB);
+  for(let ri=0;ri<3;ri++){
+    await sleep(2000);
+    const d = await cdpEval("(function(){var c=(" + COVER_MODAL + ");var b=Array.from(c.querySelectorAll('button')).find(function(x){return x.textContent.indexOf('确定')!==-1;});return b?(b.disabled?'DISABLED':'ENABLED'):'NF';})()");
+    if(d==='ENABLED'){ ok=true; break; }
+  }
 }
-if(!ok){ console.log('AI 生成未果'); }
+if(!ok){ console.log('AI 封面未选中,中止发布'); }
 
-// 5. 真实鼠标点击“确定 (1)”应用封面
-await cdpClickEl(sock, "(function(){var b=Array.from(document.querySelectorAll('button'));
-  for(var i=0;i<b.length;i++){if(b[i].textContent.trim().indexOf('确定')!==-1&&b[i].offsetWidth>0)return b[i];}return null;})()");
+// 5. 用精确坐标真实鼠标点击“确定 (1)”应用封面（cdpClickEl 曾命中外层同名“确定”按钮，弹窗未关）
+const rc = await cdpEval("(function(){var c=(" + COVER_MODAL + ");var b=Array.from(c.querySelectorAll('button')).find(function(x){return x.textContent.indexOf('确定')!==-1&&x.offsetWidth>0;});if(!b)return 'NF';var r=b.getBoundingClientRect();return JSON.stringify({x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)});})()");
+if(rc.indexOf('{')===0){ const pp=JSON.parse(rc); await cdpClickXY(sock, pp.x, pp.y); }
+for(let ci=0;ci<5;ci++){ await sleep(2000);
+  const still = await cdpEval("(function(){var ds=Array.from(document.querySelectorAll('[role=dialog]'));return ds.some(function(d){return d.innerText.indexOf('AI封面')!==-1||d.innerText.indexOf('本地上传')!==-1;});})()");
+  if(!still) break;
+}
 await sleep(3000);
 ```
 
 **核心要点**：
 - 标题框、封面占位、AI 生成 SPAN、确定按钮、发布按钮——全部走 CDP 真实鼠标坐标点击，禁 in-page `.click()`。
 - 坐标基于元素 `getBoundingClientRect` 运行时计算（用 `cdpClickEl`），绝不硬编码。
-- AI 生成触发元素是 SPAN“根据全文智能生成封面”，不是 button（用文本定位，禁写死坐标/hash）。
-- 生成完成后按钮文字是“确定 (1)”，检测用 `indexOf('确定')`。
+- AI 生成触发元素是 id=ai-cover-tab-v2-step-1（role=button），不是旧 SPAN“根据全文智能生成封面”（已不存在）。
+- 选封面必须真实点击 img 元素本身（width 41~200），禁点 group（只弹 popover、选不中）。
+- 关闭弹窗用精确坐标 cdpClickXY 点“确定 (1)”，并轮询 [role=dialog] 消失（clickByText 会命中外层同名按钮）。
 
 ---
 
@@ -326,8 +313,12 @@ for(let i=0;i<15;i++){
 | 正文 iframe | `#ueditor_0` | `contentDocument.body.innerHTML` 或 `window.editor.setContent()` |
 | 发布按钮 | `button[data-testid="publish-btn"]` | CDP mouseEvent |
 | 选择封面 | 精确文本"选择封面" + width 过滤(100~400)取最窄者(内层 ~198px 卡片) | CDP mouseEvent(动态 rect) |
-| AI封图 tab | `[role=tab]` 含 "AI封图" | CDP mouseEvent |
-| 生成封面 | `span` 文本 "根据全文智能生成封面" | CDP mouseEvent |
+| AI封面 tab | `[role=tab]` 含 "AI封面" | CDP mouseEvent |
+| 生成封面 | `#ai-cover-tab-v2-step-1` (role=button) | CDP mouseEvent |
+| AI 封面缩略图 | `img` width 41~200（弹窗内；勿选 336×252 大预览） | CDP mouseEvent（点 img 本身） |
+| 确定关闭弹窗 | `button` 含 "确定 (1)" | CDP mouseEvent 精确坐标 + 轮询 dialog 消失 |
+| AI 封面缩略图 | `img` width 41~200（弹窗内；勿选 336×252 大预览） | CDP mouseEvent（点 img 本身） |
+| 确定关闭弹窗 | `button` 含 "确定 (1)" | CDP mouseEvent 精确坐标 + 轮询 dialog 消失 |
 | 确定按钮 | `button` 含 "确定" 且 `!disabled` | CDP mouseEvent |
 | file input | `input[type="file"]` | CDP `DOM.setFileInputFiles` |
 | 遮罩层 | `position: fixed` 高 z-index | CDP eval `remove()` / `display: none` |

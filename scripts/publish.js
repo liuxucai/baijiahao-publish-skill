@@ -1,29 +1,30 @@
-// publish.js — 百家号一键发布（最终修正版 v3, 2026-08-21）
-// 自包含：仅依赖 ./cdp_lib.js + node_modules/ws，不再依赖 xbrowser。
+// publish.js — 百家号一键发布（2026-09-10 实测可用版）
+// 自包含：仅依赖 ./cdp_lib.js + node_modules/ws，不依赖 xbrowser。
 // 浏览器由 isolated-browser skill 拉起（node skills/isolated-browser/scripts/launch.js），CDP 直连 9222。
 // 所有点击用 CDP 真实鼠标坐标（Input.dispatchMouseEvent），坐标动态取 getBoundingClientRect 中心，禁硬编码。
 //
-// ⚠️ 封面占位真实可点元素是“选择封面”文字所在的内层 ~198×134 卡片（取 width 最小者），
-//    不是向上找的 -default 外层(612×134 容器)。详见 COVER_FINDER 注释。
-// ⚠️ 发布按钮必须用 CDP 真实鼠标坐标点击；in-page button.click() 对 cheetah 不提交。
-const fs = require('fs');
+// ⚠️ 封面：仅用 AI 封面（用户禁用本地上传兜底）。AI 封面失败即主动中止发布，绝不带病发布。
 const path = require('path');
 const cdpLib = require('./cdp_lib.js');
 
 const HOME = process.env.USERPROFILE;
 const SAVE = path.join(HOME, '.qclaw', 'baijiahao_skill') + '\\';
-const COVER_JPG = path.join(HOME, '.qclaw', 'baijiahao_skill', 'cover.jpg');
 const EDIT_URL = 'https://baijiahao.baidu.com/builder/rc/edit?type=news';
 
 // ===================== 配置区（每次发布改这里） =====================
 const CONFIG = {
-  title: '文言文之用',                // 标题 ≤64 字
-  // 正文：HTML 字符串，每段用 <p> 包裹
+  title: '诗词不是远方，是此刻可以停靠的自己',
   bodyHtml: [
-    '<p>文言文者，华夏千古之雅言也。自先秦诸子以降，经史子集，皆赖此以传。</p>',
+    '<p>我们总把诗词想得很远:远在课本里，远在考试后就被合上的册页里，远在某个“有文化的人”才配谈论的架子上。可诗词最初从来不是摆设，它是古人把日子过出来的回声——是困顿时的一声长叹，是欢喜时的一句脱口，是看见月亮、看见落花、看见老友时，忍不住想说点什么的那点真心。</p>',
+    '<p>苏轼在被贬黄州的深夜写“小舟从此逝，江海寄余生”，不是真要弃官而去，而是把压在心头的委屈，轻轻交给了江风。王维在“空山新雨后”里待着，也不是逃避人间，而是给自己腾出一处不被琐事塞满的安静。诗词于他们，是一处可以停靠的自己，而非逃离世界的船。</p>',
+    '<p>所以读诗词，不必先背作者生平、不必先查典故出处。最先该做的，是让一句诗撞到你身上。李白说“举杯邀明月，对影成三人”，你若也曾独自喝酒、对着窗外出神，便懂那份热闹里的孤单;杜甫写“随风潜入夜，润物细无声”，你若也在某个春夜听过雨，便知道什么叫温柔地活着。诗词的门，是用你自己的经历推开的。</p>',
+    '<p>很多人觉得诗词“用不上”。可生活里那些说不清的时刻，往往一句诗就接住了。想念一个人，是“一种相思，两处闲愁”;劝自己放宽，是“竹杖芒鞋轻胜马，谁怕”;看透得失，是“古今多少事，都付笑谈中”。它们不是装饰，而是前人替我们攒下的情绪词典，让模糊的感受有了形状。</p>',
+    '<p>也不必非读唐诗宋词才算亲近诗词。一首好的现代诗，一段打动你的歌词，甚至朋友圈里某人写的一句话，只要它让你心里一动，便有诗词的魂。重要的是那点“被说中”的瞬间——你忽然觉得，原来不只是我这么想，原来这种说不清的东西，有人早就说过了。</p>',
+    '<p>若想真的把诗词读进去，最好的法子不是背诵，而是“对上号”。今天堵车烦了，翻翻苏轼;今天想念谁了，翻翻李清照;今天想躺平，翻翻陶渊明。让诗词跟着你的日子走，而不是把它供在书架上。日子久了，那些句子会自己长进你心里，在某个人生路口悄悄冒出来，替你撑一把。</p>',
+    '<p>说到底，诗词不是远方，也不是考点，而是此刻可以停靠的自己。它不教你怎么成功，却教你怎么在成败之间，还留得住一份从容;不替你解决难题，却在你最难言说时，递来一句刚刚好的懂得。忙完今天，不妨读一句诗——不为别的，就为和那个被生活推着走的自己，重逢片刻。</p>',
   ].join(''),
-  coverMode: 'ai',                    // 'ai'（AI生成）| 'upload'（本地图）| 'skip'（跳过）
-  cdpPort: process.env.ISOB_CDP_PORT || 9222,   // CDP 端口（isolated-browser 拉起的隔离 Chrome 默认 9222）
+  coverMode: 'ai',
+  cdpPort: process.env.ISOB_CDP_PORT || 9222,
 };
 // ====================================================================
 
@@ -56,7 +57,19 @@ function scr(sock, n) { return cdpLib.cdpShot(sock, SAVE + 'pub_' + n + '.png').
 // 封面占位：精确匹配“选择封面”，筛选 width 在 100~400 的元素，取最窄者（内层 ~198px 真实可点卡片）
 const COVER_FINDER = "(function(){var els=Array.from(document.querySelectorAll('*'));var c=els.filter(function(e){return (e.textContent||'').trim()==='选择封面'&&e.getBoundingClientRect().width>100&&e.getBoundingClientRect().width<400;});if(!c.length)return null;c.sort(function(a,b){return a.getBoundingClientRect().width-b.getBoundingClientRect().width;});return c[0];})()";
 // 封面弹窗：含 AI封图/本地上传 的 dialog
-const COVER_MODAL = "Array.from(document.querySelectorAll('[role=dialog]')).find(function(d){return d.innerText.indexOf('AI封图')!==-1||d.innerText.indexOf('本地上传')!==-1;})";
+const COVER_MODAL = "Array.from(document.querySelectorAll('[role=dialog]')).find(function(d){return d.innerText.indexOf('AI封图')!==-1||d.innerText.indexOf('AI封面')!==-1||d.innerText.indexOf('本地上传')!==-1;})";
+
+// 在指定上下文(ctxExpr)内按 tag+文本定位元素（exact 控制精确/包含匹配），要求可见(offsetWidth>0)
+function inCtx(ctxExpr, tag, txt, exact) {
+  const pred = exact ? "e.textContent.trim()==='" + txt + "'" : "e.textContent.indexOf('" + txt + "')!==-1";
+  return "(function(){var c=(" + ctxExpr + ");if(!c)return null;return Array.from(c.querySelectorAll('" + tag + "')).find(function(e){return " + pred + "&&e.offsetWidth>0;});})()";
+}
+
+// 在封面弹窗内按文本点击任意可见元素(不限 tag)：txt 为包含匹配，返回是否点到
+async function clickByText(sock, txt) {
+  const finder = "(function(){var c=(" + COVER_MODAL + ");if(!c)return null;return Array.from(c.querySelectorAll('*')).find(function(e){return e.textContent.indexOf('" + txt + "')!==-1 && e.offsetWidth>0 && e.children.length<=1;});})()";
+  return await clickEl(sock, finder);
+}
 
 async function getRect(sock, finderExpr) {
   const expr = "(function(){try{var e=(" + finderExpr + ");if(!e||e.offsetWidth===0)return 'NF';e.scrollIntoView({block:'center'});var r=e.getBoundingClientRect();return JSON.stringify({x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)});}catch(ex){return 'ERR:'+ex.message;}})()";
@@ -192,49 +205,70 @@ async function fillBody(sock) {
 async function setCoverAI(sock) {
   await cdpLib.cdpEval(sock, 'window.scrollTo(0,0)'); await sl(400);
   await cdpLib.cdpEval(sock, 'window.scrollTo(0,1200)'); await sl(2200);
-  if (!await clickEl(sock, COVER_FINDER)) { log('⚠️ 未找到封面占位'); return false; }
-  let snap = await cdpLib.cdpEval(sock, 'document.body.innerText');
-  if (snap.indexOf('本地上传') === -1 && snap.indexOf('AI封图') === -1) { log('⚠️ 封面弹窗未打开'); return false; }
+  // 1) 开封面弹窗：真实鼠标点“选择封面”内层卡片（点击可能瞬时 ERR，重试至弹窗打开）
+  let opened = false;
+  for (let ci = 0; ci < 3 && !opened; ci++) {
+    await clickEl(sock, COVER_FINDER);
+    for (let wi = 0; wi < 4; wi++) {
+      await sl(1000);
+      const dd = await cdpLib.cdpEval(sock, "(function(){var ds=Array.from(document.querySelectorAll('[role=dialog]'));var c=ds.find(function(d){return d.innerText.indexOf('AI封图')!==-1||d.innerText.indexOf('AI封面')!==-1||d.innerText.indexOf('本地上传')!==-1;});return c?'COVER_DLG':'OTHER';})()");
+      if (dd === 'COVER_DLG') { opened = true; break; }
+    }
+    if (!opened) log('  封面占位点击重试 (' + (ci + 1) + ')');
+  }
+  if (!opened) { log('⚠️ 未找到封面占位/弹窗未打开'); return false; }
   log('封面弹窗已打开');
   // 隐藏蓝色提示条
   await cdpLib.cdpEval(sock, "(function(){var n=Array.from(document.querySelectorAll('*'));for(var i=0;i<n.length;i++){var e=n[i];if(e.children.length===0&&e.textContent.indexOf('标题功能已合并至文字模板')!==-1){var bar=e.closest('[class*=notice],[class*=tip],[class*=alert],[class*=bar],[class*=banner]')||e.parentElement;if(bar){bar.style.display='none';return 'HIDDEN';}}}return 'NF';})()");
   await sl(700);
-  // 切 AI封图 tab
-  await clickEl(sock, inCtx(COVER_MODAL, '[role=tab]', 'AI封图', false));
-  await sl(2200);
-  // 触发 AI 生成：SPAN“根据全文智能生成封面”
-  if (!await clickEl(sock, inCtx(COVER_MODAL, 'span', '根据全文智能生成封面', false))) {
-    await clickEl(sock, inCtx(COVER_MODAL, 'button', '智能生成', false));
+  // 2) 切 AI封面 tab（2026-09-10 新 UI：tab 文本为“AI封面”）
+  await clickEl(sock, inCtx(COVER_MODAL, '[role=tab]', 'AI封面', false));
+  await sl(2000);
+  // 3) 点 AI 生成封面入口（id=ai-cover-tab-v2-step-1，role=button，即“来试试AI生成封面”/从正文总结生成）
+  log('点「AI生成封面」(step-1)...');
+  if (!await cdpLib.cdpClickEl(sock, "document.getElementById('ai-cover-tab-v2-step-1')")) { log('⚠️ 未找到 AI 生成入口'); return false; }
+  // 轮询封面图生成（最多 ~2min，失败则重试点击 step-1）
+  let genOk = false;
+  for (let i = 0; i < 40; i++) {
+    await sl(3000);
+    const cnt = await cdpLib.cdpEval(sock, "(function(){var c=(" + COVER_MODAL + ");if(!c)return -1;return Array.from(c.querySelectorAll('img')).filter(function(img){return img.getBoundingClientRect().width>40;}).length;})()");
+    if (cnt > 0) { log('封面图已生成: ' + cnt + ' 张 (' + ((i + 1) * 3) + 's)'); genOk = true; break; }
+    const fail = await cdpLib.cdpEval(sock, "(function(){var c=(" + COVER_MODAL + ");return c&&/生成失败|重试|生成出错/.test(c.innerText)?1:0;})()");
+    if (fail) { log('  检测到生成失败，重试(' + ((i + 1) * 3) + 's)'); await cdpLib.cdpClickEl(sock, "document.getElementById('ai-cover-tab-v2-step-1')"); }
+    if (i % 10 === 0) log('  等待封面生成 (' + ((i + 1) * 3) + 's)...');
   }
-  log('已触发 AI 生成，轮询...');
-  let ok = false;
-  for (let i = 0; i < 30; i++) {
-    await sl(5000);
-    const d = await cdpLib.cdpEval(sock, "(function(){var c=(" + COVER_MODAL + ");if(!c)return 'NOMODAL';var b=Array.from(c.querySelectorAll('button'));for(var i=0;i<b.length;i++){if(b[i].textContent.trim().indexOf('确定')!==-1)return b[i].disabled?'DISABLED':'ENABLED';}return 'NF';})()");
-    if (i % 3 === 0 || d === 'ENABLED') log('  [' + ((i + 1) * 5) + 's] 确定: ' + d);
-    if (d === 'ENABLED') { ok = true; break; }
+  if (!genOk) { log('⚠️ 封面图未生成，AI 封面失败，中止发布（用户禁用本地上传兜底）'); return false; }
+  // 4) 点第一张缩略图（70×52 的 img 本身，width 41~200；勿点 336 大预览）→ 触发选中态(-selected)，确定 (1) 启用
+  // 选中可能异步，未启用则重点（重新取坐标）最多 3 次，每次轮询 ~6s。
+  const THUMB = "(function(){var c=(" + COVER_MODAL + ");if(!c)return null;var imgs=Array.from(c.querySelectorAll('img')).filter(function(img){var w=img.getBoundingClientRect().width;return w>40&&w<200;});return imgs[0]||null;})()";
+  let ready = 'DISABLED';
+  for (let pick = 0; pick < 3 && ready !== 'ENABLED'; pick++) {
+    log('点选缩略图(第' + (pick + 1) + '次)...');
+    if (!await clickEl(sock, THUMB)) { log('⚠️ 未找到缩略图'); break; }
+    for (let ri = 0; ri < 3; ri++) {
+      await sl(2000);
+      ready = await cdpLib.cdpEval(sock, "(function(){var c=(" + COVER_MODAL + ");var b=Array.from(c.querySelectorAll('button')).find(function(x){return x.textContent.indexOf('确定')!==-1;});return b?(b.disabled?'DISABLED':'ENABLED'):'NF';})()");
+      if (ready === 'ENABLED') break;
+    }
   }
-  if (!ok) { log('⚠️ AI生成未果，转本地上传'); return setCoverUpload(sock); }
-  await clickEl(sock, inCtx(COVER_MODAL, 'button', '确定', false));
-  await sl(3000);
+  if (ready !== 'ENABLED') { log('⚠️ 确定按钮未启用(当前=' + ready + ')，AI 封面失败，中止发布（用户禁用本地上传兜底）'); return false; }
+  log('已选图，确定可用');
+  // 用精确坐标真实鼠标点击“确定 (1)”按钮（clickByText 曾命中弹窗外同名按钮导致弹窗未关）
+  const rc = await cdpLib.cdpEval(sock, "(function(){var c=(" + COVER_MODAL + ");var b=Array.from(c.querySelectorAll('button')).find(function(x){return x.textContent.indexOf('确定')!==-1&&x.offsetWidth>0;});if(!b)return 'NF';var r=b.getBoundingClientRect();return JSON.stringify({x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)});})()");
+  if (rc.indexOf('{') === 0) { const p = JSON.parse(rc); await cdpLib.cdpClickXY(sock, p.x, p.y); }
+  // 轮询弹窗关闭（最多 ~10s）
+  let closed = false;
+  for (let ci = 0; ci < 5; ci++) {
+    await sl(2000);
+    const still = await cdpLib.cdpEval(sock, "(function(){var ds=Array.from(document.querySelectorAll('[role=dialog]'));return ds.some(function(d){return d.innerText.indexOf('AI封面')!==-1||d.innerText.indexOf('本地上传')!==-1;});})()");
+    if (!still) { closed = true; break; }
+  }
   await scr(sock, 'cover_ok');
+  if (!closed) { log('⚠️ 封面弹窗未关闭，AI 封面失败，中止发布（用户禁用本地上传兜底）'); return false; }
   log('✅ AI封面已设置');
   return true;
 }
 
-// 封面-本地上传（兜底）
-async function setCoverUpload(sock) {
-  // 切到本地上传 tab
-  await clickEl(sock, inCtx(COVER_MODAL, '[role=tab]', '本地上传', false));
-  await sl(1500);
-  if (!fs.existsSync(COVER_JPG)) { log('⚠️ 本地封面不存在: ' + COVER_JPG + '，跳过'); return false; }
-  const r = await cdpLib.setFileInputFiles(sock, COVER_JPG);
-  log('文件注入: ' + r);
-  await sl(3000);
-  const d = await cdpLib.cdpEval(sock, "(function(){var c=(" + COVER_MODAL + ");if(!c)return 'NOMODAL';var b=Array.from(c.querySelectorAll('button'));for(var i=0;i<b.length;i++){if(b[i].textContent.trim().indexOf('使用')!==-1||b[i].textContent.trim().indexOf('确定')!==-1)return b[i].disabled?'DISABLED':'ENABLED';}return 'NF';})()");
-  if (d === 'ENABLED') { await clickEl(sock, inCtx(COVER_MODAL, 'button', '确定', false)); await sl(3000); log('✅ 本地封面已设置'); return true; }
-  log('⚠️ 本地上传未生效'); return false;
-}
 
 // 发布（CDP 真实鼠标坐标点击，禁 in-page button.click）
 async function publish(sock) {
@@ -279,8 +313,12 @@ async function main() {
   if (!titleOk) { await scr(sock, 'title_fail'); sock.close(); return; }
   await fillBody(sock);
   if (CONFIG.coverMode !== 'skip') {
-    if (CONFIG.coverMode === 'ai') await setCoverAI(sock);
-    else await setCoverUpload(sock);
+    const hasCover = await cdpLib.cdpEval(sock, "(function(){var c=document;var ph=Array.from(c.querySelectorAll('*')).some(function(e){return e.children.length===0&&e.textContent.trim()==='选择封面'&&e.offsetWidth>0&&e.getBoundingClientRect().width<400;});return !ph;})()");
+    if (hasCover) { log('封面已设置，跳过设置'); }
+    else {
+      const coverOk = CONFIG.coverMode === 'ai' ? await setCoverAI(sock) : false;
+      if (!coverOk) { log('❌ 封面未设置成功，中止发布（避免无封面被静默拦截）'); await scr(sock, 'cover_fail'); sock.close(); return; }
+    }
   }
   const ok = await publish(sock);
   await scr(sock, 'final');
@@ -292,4 +330,4 @@ if (require.main === module) {
   main().catch(e => log('FATAL: ' + e.message));
 }
 
-module.exports = { validateTitle, reconstructTitle, ensureTitle, getRealTitle, clearTitle, fillTitle, CONFIG };
+module.exports = { validateTitle, reconstructTitle, ensureTitle, getRealTitle, clearTitle, fillTitle, setCoverAI, CONFIG };
