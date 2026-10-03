@@ -1,4 +1,4 @@
-﻿# 百家号发布 - 工作流程（2026-07-15 实测修正版）
+# 百家号发布 - 工作流程（2026-07-15 实测修正版）
 
 > ⚠️ v3 修正(2026-08-21 实战验证《身处低谷时,请重新认识你的「处境」》发布成功):
 > - 封面弹窗是 **cheetah 自研组件(非 antd)**。占位项、AI 生成触发(SPAN"根据全文智能生成封面")、"确定 (1)"按钮均用文本/角色动态定位,禁写死运行时 class hash。
@@ -365,3 +365,32 @@ async function verify() {
 │        └─ 重试
 └─ 如果全部正常仍不通 → 手动
 ```
+
+## 十一、正文段间插图流程（v4，2026-09-29 实测跑通）
+
+> 完整实现见 `scripts/publish_with_image.js`；问题全记录见 `troubleshooting.md` 第十章（I1~I12）。
+
+```
+0. 前置:isolated-browser launch.js(2026-09-29 后版本,内置防节流四参数)拉起隔离 Chrome,
+   百家号已登录;文章内容外置 JS 模块(title/partA/partB/image/tags)
+1. 强刷编辑页(Page.navigate + 时间戳)——插图弹窗是 React 受控组件,半开状态(隐藏/残留)下
+   再点 insertimage 不会重建,强刷是唯一可靠复位
+2. 等编辑器 READY → 关"我知道了"引导弹窗 → closeImgDlg(关可见弹窗+隐藏可见 .cheetah-modal-wrap 遮罩)
+3. ensureTitle 填标题(复用 publish.js 闭环校验)
+4. setContent(partA)
+5. 光标定位段尾:editor.selection.getRange().setStartAtLast(editor.body).collapse(true).select()
+   (插图插在当前光标处,此步决定配图落在段间)
+6. window.scrollTo(0,0) → 移除隐藏遗留弹窗实例 → 取 .edui-for-insertimage rect 真实点击
+   (勿用 scrollIntoView,长文下会把工具栏滚乱);未开则重试≤3 次;
+   若只出「添加图片/智能配图」悬浮菜单,先 mouseMoved hover 再真实点击菜单内「添加图片」
+7. setImgFile:Runtime.evaluate(accept=image 过滤,取最后一个 input)→ DOM.getDocument
+   → DOM.requestNode → DOM.setFileInputFiles(只 set 一次!反复重设=插入 N 张重复图)
+8. 轮询弹窗「确认」按钮变 enabled(约 10~15s;input.files 恒 0 是假象,勿以此判断)
+9. 真实鼠标点「确认」(动态取 rect 中心) → 等弹窗关闭 + getContent() 含 <img>
+10. getContent() 拼 partB → setContent 回写 → 校验 imgs=1 且 textlen>500
+11. setCoverAI(AI 封面,失败即中止) → 点发布 → 轮询成功信号(发布成功/审核中/URL 跳 manage)
+```
+
+异常收尾:
+- 正文出现 N 张重复图 → `node scripts/finish_dedupe_publish.js`(去重→封面→发布,不用重头再来)
+- 弹窗进入"隐身挂起"(组件 state 认为已打开,删 DOM 无效) → 只能强刷编辑页

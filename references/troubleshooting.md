@@ -1,4 +1,4 @@
-﻿# 百家号发布问题与解决方案(v6,2026-07-07 / v7 修正 2026-07-10 / v3 再修正 2026-08-21)
+# 百家号发布问题与解决方案(v6,2026-07-07 / v7 修正 2026-07-10 / v3 再修正 2026-08-21)
 
 > ⚠️ v7 重大修正(2026-07-10 已 E2E 验证发布成功):
 > 1. **发布按钮**:v7 初版称可用 CDP eval 原生 `button.click()` 一次完成--**二次实测(18:54)证明不成立**:in-page `button.click()` 对 cheetah/React 组件不提交(返回 CLICKED 但 URL 不变)。**正确做法:CDP `Input.dispatchMouseEvent` 真实鼠标坐标点击**(取按钮真实中心)。标题为空/封面缺失仍会静默拦截,表现为按钮失灵。
@@ -186,3 +186,22 @@
 | F-G | 本地上传兜底（setCoverUpload） | ⛔ 用户明令禁止 | AI 封面失败即**主动中止发布**，绝不带病发布 |
 | F-H | 硬编码坐标点击 / in-page `.click()` | cheetah 组件不提交、坐标随视口漂移 | 全部用 `getBoundingClientRect` 动态取中心 + CDP 真实鼠标 |
 | F-I | 向上找 `-default` 祖先定位封面占位 | hash 每次加载都变且取到 612px 外层非可点容器 | 用「精确文本 + 宽度过滤取最窄」 |
+
+## 十、正文插图（段间配图）——2026-09-29 实测跑通（《婚车租车避坑指南》发布成功）
+
+> 完整可用脚本已沉淀在本 skill：`scripts/publish_with_image.js`（标题→partA→光标段尾→插图弹窗上传→确认→getContent 拼 partB→AI封面→发布）、`scripts/finish_dedupe_publish.js`（重复图去重→封面→发布接续收尾）、`templates/article_example.js`（文章内容模块示例）。
+
+| # | 问题 | 根因 | 解决方法 |
+|---|------|------|----------|
+| I1 | 工具栏 `.edui-for-insertimage` 点击后弹窗不开 | 点击会先弹「添加图片 / 智能配图」悬浮菜单（有时直接开弹窗，行为不稳定）；且长文下 `scrollIntoView` 会把工具栏滚乱 | 先 `window.scrollTo(0,0)` 再取 rect 直接点击；若只出菜单，真实鼠标（先 `mouseMoved` 再 press/release）点菜单内「添加图片」项 |
+| I2 | 插图上传弹窗识别不到 | 是 `[role=dialog]`（外层 `.cheetah-modal-wrap`），tab 文案「本地图片/AI配图/免费正版图库/素材库/正版图集/网盘图片」会变；**右下角按钮文案是「确认」不是「确定」** | 按 `[role=dialog]` 可见 + 含「取消」+（确定或确认）+（上传/图库/AI配图）+ 文本长度过滤来定位；按钮匹配 `确认||确定` |
+| I3 | `DOM.setFileInputFiles` 后 `input.files.length` 恒为 0 | CDP 设置的 FileList 对 JS 只读不可见（假象），**上传实际已触发** | 不要用 `input.files` 校验成败；以弹窗「确认」按钮变 enabled 为准（约 10~15s） |
+| I4 | cdp_lib 的 `setFileInputFiles` 选错 input | 它固定选页面上第一个 `input[type=file]`（那是 video 的） | 自实现：`Runtime.evaluate` 取 `input[type=file][accept*=image]` 的 objectId → `DOM.getDocument` 初始化 → `DOM.requestNode` → `DOM.setFileInputFiles`（不先 getDocument 会拿到 NO_NODE） |
+| I5 | 对同一 input 反复 setFileInputFiles → 正文插入 N 张重复图 | 每次设置都触发一次上传+插入 | 只 set 一次，之后只轮询「确认」enabled；不慎重复时用 `editor.getContent()` 正则只保留第一个 `<img>` 后 `setContent` 回写去重 |
+| I6 | 点「取消」关弹窗后，工具栏点击全被吞 | 残留透明 `.cheetah-modal-wrap` 遮罩（F7 同款） | 把可见的 `.cheetah-modal-wrap` 全部 `display:none` |
+| I7 | 隐藏遮罩后再点 insertimage 弹窗永不重建 | React 组件 state 认为弹窗仍打开，删 DOM 也无效 | **强刷编辑页（Page.navigate 加时间戳）是唯一可靠复位**；整个发布流程应一次跑通、避免开第二次弹窗 |
+| I8 | 窗口被遮挡时弹窗打开是空壳（只有取消/确认，无 tab 无上传区） | `visibilityState=hidden` 时渲染被节流，弹窗懒加载内容不渲染；确认按钮永远 disabled | 隔离 Chrome 启动加 `--disable-backgrounding-occluded-windows --disable-background-timer-throttling --disable-renderer-backgrounding --disable-features=CalculateNativeWinOcclusion`；确保窗口可见（`Page.bringToFront` 对被遮挡窗口无效，需防节流参数兜底） |
+| I9 | 插图插入位置不对 | 弹窗把图插在当前光标处 | setContent(partA) 后用 `editor.selection.getRange().setStartAtLast(editor.body).collapse(true).select()` 定位段尾，再开弹窗；上传确认后 `getContent()` 拼 partB 再 `setContent` 回写 |
+| I10 | 标题框点击全部落空（`elementFromPoint` 命中 `cheetah-modal-wrap`），表现为"标题没填进去" | 残留的插图弹窗（透明遮罩或隐藏 wrap）盖在标题框上方，吞掉所有点击（F7/I6 同族问题） | 填标题前先 `closeImgDlg`（关可见弹窗 + 无条件隐藏可见 `.cheetah-modal-wrap`）+ 移除隐藏的遗留弹窗实例；复位不了就强刷编辑页 |
+| I11 | 点 insertimage 后弹出的是「添加图片/智能配图」悬浮菜单而非上传弹窗 | 新版 UI 点击工具栏插图按钮先出二级菜单，行为不稳定（有时直接开弹窗） | 若只出菜单：先 `Input.dispatchMouseEvent mouseMoved` hover 到菜单内「添加图片」项，再 press/release 真实点击（纯坐标 press/release 无 hover 可能不触发） |
+| I12 | `Page.bringToFront` 后页面仍 `visibilityState=hidden`，弹窗内容空壳、确认恒 disabled | bringToFront 只切换标签页焦点，对被其他窗口遮挡的 OS 窗口无效 | 用隔离 Chrome 启动参数防节流（isolated-browser launch.js 已内置，见 I8）；关闭/重启实例时登录态在 `~/.chrome_qclaw_stable` profile 中不会丢 |

@@ -1,19 +1,29 @@
-﻿---
+---
 name: baijiahao-publisher
 description: 百家号(baijiahao.baidu.com)文章自动发布流程。通过 isolated-browser 拉起隔离 Chrome + CDP WebSocket 驱动。适用 Windows + 稳定版 Chrome + isolated-browser skill。触发词:百家号发布、baijiahao、发布文章到百家号。
 ---
 
-# 百家号文章自动发布 Skill(v3,2026-08-21 修正:自包含纯 CDP + 封面定位修正)
+# 百家号文章自动发布 Skill(v4,2026-09-29 新增:正文段间插图;v3 自包含纯 CDP + 封面定位修正)
 
 ## 适用场景
 
 - 自动化将文章发布到百度百家号平台
-- 处理标题(Lexical 编辑器)、正文(UEditor iframe)、封面设置
+- 处理标题(Lexical 编辑器)、正文(UEditor iframe)、**正文段间插图(UEditor 插图弹窗)**、封面设置
 - 支持本地文件上传封面和 AI 智能生成封面两种策略
 
-## 关键发现更新(v3,2026-08-21 修正:自包含纯 CDP,封面占位定位修正)
+## v4 新增(2026-09-29 实测,发布《婚车租车避坑指南》验证)
 
-> 历史:2026-07-10 v7 已打通发布全流程;2026-08-21 重写为自包含纯 CDP(不再依赖 xbrowser),并修正封面占位定位为“内层 ~198px 卡片”。
+**正文段间插图已打通**,统一入口 `scripts/publish_with_image.js`:
+
+1. 流程:强刷编辑页 → ensureTitle → setContent(partA) → 光标定位段尾 → 点工具栏 `.edui-for-insertimage` → 插图弹窗 `input[type=file][accept*=image]` 上传配图 → 等「确认」enabled → 真实鼠标点确认 → `getContent()` 拼 partB → AI 封面 → 发布。
+2. 关键坑(详见 `references/troubleshooting.md` 第十章 I1~I12):
+   - 插图弹窗右下角按钮文案是**「确认」**不是「确定」(封面弹窗才是「确定 (1)」);
+   - `DOM.setFileInputFiles` 后 `input.files.length` 读出恒 0 是**假象**,上传实际已触发——以「确认」变 enabled 为准,**勿反复重设**(会插入 N 张重复图,重复时用 `scripts/finish_dedupe_publish.js` 去重收尾);
+   - 弹窗取消后残留透明 `.cheetah-modal-wrap` 遮罩吞点击,且 React 组件 state 认为弹窗仍开、再点不重建——**强刷编辑页是唯一可靠复位**;
+   - **窗口被遮挡时渲染被节流,弹窗懒加载只挂空壳**——isolated-browser 的 `launch.js` 已内置防节流四参数(2026-09-29)。
+3. 文章内容(标题/partA/partB/配图路径/标签)外置为 JS 模块,示例见 `templates/article_example.js`。
+
+> 历史:2026-07-10 v7 打通发布全流程;2026-08-21 重写为自包含纯 CDP(不再依赖 xbrowser);2026-09-29 v4 打通正文段间插图。
 
 ### ✅ 核心难题已解决(v7,2026-07-10):发布全流程自动化
 
@@ -143,7 +153,7 @@ Lexical 编辑器不支持 `execCommand('delete')`,Ctrl+A+Delete 是追加而非
 | 项目 | 要求 |
 |------|------|
 | 浏览器 | 正式版 Chrome / Edge(稳定版) |
-| 启用浏览器 | **isolated-browser skill**:`node skills/isolated-browser/scripts/launch.js` 拉起隔离 Chrome |
+| 启用浏览器 | **isolated-browser skill**:`node skills/isolated-browser/scripts/launch.js` 拉起隔离 Chrome。⚠️ **必须用 2026-09-29 之后的 launch.js**(内置防后台节流四参数——窗口被遮挡时弹窗懒加载才不会冻结,插图上传强依赖) |
 | 控制工具 | Node.js `ws` 模块(CDP 直连) |
 | 路径 | isolated-browser: `skills/isolated-browser/scripts/launch.js` |
 | CDP | 由 isolated-browser 拉起的隔离 Chrome 以 `--remote-debugging-port=9222` 常驻提供(隔离 profile `~/.chrome_qclaw_stable`,不碰用户浏览器) |
@@ -176,17 +186,19 @@ node scripts/publish.js
 skills/baijiahao-publisher/
 ├── SKILL.md                    ← 本文件
 ├── scripts/
-│   ├── publish.js               ← ✅ 统一发布入口(标题+正文+AI封面+发布,已验证 E2E)
+│   ├── publish.js               ← ✅ 统一发布入口(标题+正文+AI封面+发布,已验证 E2E;导出 ensureTitle/setCoverAI 等供复用)
+│   ├── publish_with_image.js    ← ✅ v4 统一发布入口:标题+正文段间插图+AI封面+发布(文章内容外置 JS 模块)
+│   ├── finish_dedupe_publish.js ← ✅ 接续收尾:正文重复图去重→AI封面→发布(插图重复时不重头再来)
 │   ├── cdp_lib.js               ← CDP WebSocket 库(connect/click/eval/insertText/setFileInputFiles/screenshot)✅
 │   ├── check_title.js           ← 标题静态校验(validateTitle,纯规则不连浏览器)
 │   ├── clear_title.js           ← 清空标题框(Ctrl+A+Input.insertText(""))
 │   └── test_title_clear.js      ← 标题填→清→填回归测试
 ├── references/
 │   ├── workflow.md             ← 详细步骤
-│   ├── troubleshooting.md      ← 问题与方案
+│   ├── troubleshooting.md      ← 问题与方案(第十章=正文插图 I1~I12)
 │   └── commands.md             ← 浏览器启用 + CDP 命令参考
 └── templates/
-    └── article.txt             ← 文章模板
+    └── article_example.js      ← 文章内容模块示例(title/partA/partB/image/tags)
 ```
 
 ## 快速使用
@@ -199,10 +211,16 @@ npm install ws   # 若 node_modules/ws 已存在可跳过
 # 2. 完整发布(填标题+正文+AI封面+发布):编辑 publish.js 的 TITLE/正文后再跑
 node scripts/publish.js
 
-# 3. 仅补封面+发布 / 弹窗已开收尾：均已并入统一入口 scripts/publish.js
+# 3. 正文段间插图版发布(v4):文章内容外置为 JS 模块(title/partA/partB/image/tags)
+#    把 templates/article_example.js 复制改名,替换成新文章内容后:
+node scripts/publish_with_image.js <文章模块路径>   # 不传参默认用 templates/article_example.js
+
+# 4. 接续收尾(正文已就位但有重复插图时):去重→AI封面→发布
+node scripts/finish_dedupe_publish.js
 
 #    （旧 cover_publish.js / finish_publish.js / final_publish.js 已删除，因其残留旧「AI封图」UI、
-#     336 大图 width>40 单过滤、clickByText 关弹窗等失效逻辑，已由 publish.js 取代）
+#     336 大图 width>40 单过滤、clickByText 关弹窗等失效逻辑，已由 publish.js 取代；
+#     templates/article.txt 旧 markdown 模板已删除，正文/插图流程用 JS 模块 article_example.js）
 ```
 
 > 完整发布链路已打通。CDP 端口 9222 需由 **isolated-browser 拉起的隔离 Chrome** 提供(运行 `node skills/isolated-browser/scripts/launch.js`);百家号需已登录。所有点击用 CDP 真实鼠标坐标(动态 rect),不依赖运行时 class hash。
